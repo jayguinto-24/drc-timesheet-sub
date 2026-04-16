@@ -57,7 +57,6 @@ const LEAVE_TYPES = [
   "Personal Leave",
   "Public Holiday",
   "Roster Day Off",
-  "Overtime",
 ];
 
 // Pay cycle: Thursday to Wednesday, fortnightly
@@ -76,7 +75,7 @@ const FORTNIGHT_TEMPLATE = [
   { day: "Wed", week: 2, defaultHours: 8.5 },
 ];
 
-const openJobs = JOBS.filter((j) => j.status === "open");
+const openJobs = JOBS.filter((j) => j.status === "open"); // base — extended dynamically in App
 
 function Badge({ type }) {
   const styles = {
@@ -199,37 +198,88 @@ function Dashboard({ entries }) {
   );
 }
 
-function TimesheetForm({ onSubmit, lockedEmployee }) {
+function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
   const [employee, setEmployee] = useState(lockedEmployee || "");
   const [periodStart, setPeriodStart] = useState("");
+
+  // Each day row holds: day info + an array of job entries + leave + comment
+  // jobEntries: [{ jobCode, hours }, ...]
   const [rows, setRows] = useState(
     FORTNIGHT_TEMPLATE.map((d) => ({
       day: d.day,
       week: d.week,
       isRDO: d.isRDO || false,
-      hours: d.defaultHours,
-      jobCode: "",
+      totalHours: d.defaultHours,
+      jobEntries: [{ jobCode: "", hours: d.isRDO ? 0 : d.defaultHours }],
+      comment: "",
+      overtimeType: "",
       leaveType: "",
     }))
   );
 
-  const totalHours = rows.reduce((s, r) => s + Number(r.hours || 0), 0);
+  // Sum of all job hours across all days
+  const totalHours = rows.reduce((s, r) => s + Number(r.totalHours || 0), 0);
 
-  const updateRow = (i, field, val) => {
-    setRows((prev) => prev.map((r, idx) => idx === i ? { ...r, [field]: val } : r));
+  const updateRowField = (i, field, val) => {
+    setRows(prev => prev.map((r, idx) => idx === i ? { ...r, [field]: val } : r));
+  };
+
+  const updateJobEntry = (rowIdx, jobIdx, field, val) => {
+    setRows(prev => prev.map((r, i) => {
+      if (i !== rowIdx) return r;
+      const newEntries = r.jobEntries.map((je, j) =>
+        j === jobIdx ? { ...je, [field]: val } : je
+      );
+      // Recalculate totalHours from sum of job entry hours
+      const newTotal = newEntries.reduce((s, je) => s + Number(je.hours || 0), 0);
+      return { ...r, jobEntries: newEntries, totalHours: newTotal };
+    }));
+  };
+
+  const addJobEntry = (rowIdx) => {
+    setRows(prev => prev.map((r, i) => {
+      if (i !== rowIdx) return r;
+      return { ...r, jobEntries: [...r.jobEntries, { jobCode: "", hours: 0 }] };
+    }));
+  };
+
+  const removeJobEntry = (rowIdx, jobIdx) => {
+    setRows(prev => prev.map((r, i) => {
+      if (i !== rowIdx) return r;
+      const newEntries = r.jobEntries.filter((_, j) => j !== jobIdx);
+      const newTotal = newEntries.reduce((s, je) => s + Number(je.hours || 0), 0);
+      return { ...r, jobEntries: newEntries, totalHours: newTotal };
+    }));
   };
 
   const handleSubmit = () => {
     if (!employee || !periodStart) return alert("Please select employee and period start date.");
-    const emp = EMPLOYEES.find((e) => e.id === employee);
+    const emp = [...EMPLOYEES].find((e) => e.id === employee);
     onSubmit({ employee: emp, periodStart, rows, totalHours, submittedAt: new Date().toISOString() });
     alert("Timesheet submitted successfully!");
   };
+
+  const resetRows = () => setRows(
+    FORTNIGHT_TEMPLATE.map((d) => ({
+      day: d.day,
+      week: d.week,
+      isRDO: d.isRDO || false,
+      totalHours: d.defaultHours,
+      jobEntries: [{ jobCode: "", hours: d.isRDO ? 0 : d.defaultHours }],
+      comment: "",
+      overtimeType: "",
+      leaveType: "",
+    }))
+  );
+
+  const cellStyle = { padding: "6px 10px", verticalAlign: "top" };
+  const inputBase = { border: "1px solid #e2e8f0", borderRadius: 6, fontSize: 12, fontFamily: "inherit", color: "#1e293b", background: "#fff" };
 
   return (
     <div style={{ padding: "28px 24px" }}>
       <h2 style={{ fontSize: 20, fontWeight: 700, color: "#0f172a", marginBottom: 20 }}>Submit Fortnightly Timesheet</h2>
 
+      {/* Employee + Period header */}
       <div style={{ display: "flex", gap: 16, marginBottom: 24, flexWrap: "wrap" }}>
         <div>
           <label style={{ fontSize: 12, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 6 }}>Employee</label>
@@ -247,54 +297,177 @@ function TimesheetForm({ onSubmit, lockedEmployee }) {
         </div>
         <div>
           <label style={{ fontSize: 12, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 6 }}>Period Start (Thursday)</label>
-          <input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} style={{ padding: "8px 14px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "inherit", color: "#1e293b" }} />
+          <input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)}
+            style={{ padding: "8px 14px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "inherit", color: "#1e293b" }} />
         </div>
       </div>
 
+      {/* Timesheet table */}
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ background: "#f8fafc" }}>
-              {["Week", "Day", "Hrs", "Job Code", "Leave / Other"].map((h) => (
+              {["Wk", "Day", "Total Hrs", "Job Allocations", "Comments", "Overtime", "Leave / Other"].map((h) => (
                 <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontWeight: 600, color: "#475569", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, i) => (
-              <tr key={i} style={{ background: row.isRDO ? "#fafafa" : i % 2 === 0 ? "#fff" : "#fafcff" }}>
-                <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: 12 }}>Wk {row.week}</td>
-                <td style={{ padding: "8px 12px", color: row.isRDO ? "#94a3b8" : "#1e293b", fontStyle: row.isRDO ? "italic" : "normal" }}>{row.day}</td>
-                <td style={{ padding: "8px 12px" }}>
-                  {row.isRDO
-                    ? <span style={{ color: "#94a3b8", fontSize: 12 }}>RDO</span>
-                    : <input type="number" step="0.5" min="0" max="14" value={row.hours} onChange={(e) => updateRow(i, "hours", e.target.value)} style={{ width: 64, padding: "4px 8px", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: 13, textAlign: "center" }} />
-                  }
-                </td>
-                <td style={{ padding: "8px 12px" }}>
-                  {!row.isRDO && (
-                    <select value={row.jobCode} onChange={(e) => updateRow(i, "jobCode", e.target.value)} style={{ padding: "4px 8px", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: 12, fontFamily: "inherit", background: "#fff", color: "#1e293b", minWidth: 180 }}>
-                      <option value="">— select job —</option>
-                      {openJobs.map((j) => <option key={j.id} value={j.id}>{j.id}</option>)}
-                    </select>
-                  )}
-                </td>
-                <td style={{ padding: "8px 12px" }}>
-                  {!row.isRDO && (
-                    <select value={row.leaveType} onChange={(e) => updateRow(i, "leaveType", e.target.value)} style={{ padding: "4px 8px", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: 12, fontFamily: "inherit", background: "#fff", color: "#1e293b", minWidth: 150 }}>
-                      <option value="">— none —</option>
-                      {LEAVE_TYPES.map((lt) => <option key={lt} value={lt}>{lt}</option>)}
-                    </select>
-                  )}
-                </td>
-              </tr>
-            ))}
+            {rows.map((row, i) => {
+              const jobHoursTotal = row.jobEntries.reduce((s, je) => s + Number(je.hours || 0), 0);
+              const allocated = !row.isRDO && jobHoursTotal > 0;
+              const mismatch = !row.isRDO && Math.abs(jobHoursTotal - Number(row.totalHours)) > 0.01;
+
+              return (
+                <tr key={i} style={{ background: row.isRDO ? "#fafafa" : i % 2 === 0 ? "#fff" : "#fafcff", borderBottom: "1px solid #f1f5f9" }}>
+                  {/* Week */}
+                  <td style={{ ...cellStyle, color: "#94a3b8", fontSize: 12, paddingTop: 12 }}>Wk {row.week}</td>
+
+                  {/* Day */}
+                  <td style={{ ...cellStyle, color: row.isRDO ? "#94a3b8" : "#1e293b", fontStyle: row.isRDO ? "italic" : "normal", paddingTop: 12, whiteSpace: "nowrap" }}>
+                    {row.day}
+                  </td>
+
+                  {/* Total hours for the day */}
+                  <td style={{ ...cellStyle, paddingTop: 10 }}>
+                    {row.isRDO
+                      ? <span style={{ color: "#94a3b8", fontSize: 12 }}>RDO</span>
+                      : <div>
+                          <input
+                            type="number" step="0.5" min="0" max="16"
+                            value={row.totalHours}
+                            onChange={(e) => updateRowField(i, "totalHours", e.target.value)}
+                            style={{ ...inputBase, width: 60, padding: "4px 8px", textAlign: "center" }}
+                          />
+                          {mismatch && (
+                            <div style={{ fontSize: 10, color: "#f59e0b", marginTop: 3, whiteSpace: "nowrap" }}>
+                              ⚠ {jobHoursTotal.toFixed(1)}h allocated
+                            </div>
+                          )}
+                        </div>
+                    }
+                  </td>
+
+                  {/* Job allocations */}
+                  <td style={{ ...cellStyle, minWidth: 340 }}>
+                    {row.isRDO
+                      ? <span style={{ color: "#94a3b8", fontSize: 12 }}>—</span>
+                      : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {row.jobEntries.map((je, j) => (
+                            <div key={j} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              {/* Job selector */}
+                              <select
+                                value={je.jobCode}
+                                onChange={(e) => updateJobEntry(i, j, "jobCode", e.target.value)}
+                                style={{ ...inputBase, padding: "4px 6px", minWidth: 160 }}
+                              >
+                                <option value="">— select job —</option>
+                                {[...openJobs, ...importedJobs.filter(j => j.status === "open")].map((jb) => <option key={jb.id} value={jb.id}>{jb.id} {jb.description ? "– " + jb.description.slice(0,30) : ""}</option>)}
+                              </select>
+
+                              {/* Hours for this job */}
+                              <input
+                                type="number" step="0.5" min="0" max="16"
+                                value={je.hours}
+                                onChange={(e) => updateJobEntry(i, j, "hours", e.target.value)}
+                                title="Hours on this job"
+                                style={{ ...inputBase, width: 54, padding: "4px 6px", textAlign: "center" }}
+                              />
+                              <span style={{ fontSize: 11, color: "#94a3b8" }}>h</span>
+
+                              {/* Remove job entry */}
+                              {row.jobEntries.length > 1 && (
+                                <button
+                                  onClick={() => removeJobEntry(i, j)}
+                                  title="Remove this job"
+                                  style={{ background: "none", border: "none", cursor: "pointer", color: "#e11d48", fontSize: 16, lineHeight: 1, padding: "2px 4px" }}
+                                >×</button>
+                              )}
+                            </div>
+                          ))}
+
+                          {/* Add another job */}
+                          <button
+                            onClick={() => addJobEntry(i)}
+                            style={{ alignSelf: "flex-start", background: "none", border: "1px dashed #cbd5e1", borderRadius: 6, color: "#64748b", fontSize: 11, cursor: "pointer", padding: "3px 10px", fontFamily: "inherit", marginTop: 2 }}
+                          >
+                            + add job
+                          </button>
+
+                          {/* Allocation bar */}
+                          {Number(row.totalHours) > 0 && (
+                            <div style={{ marginTop: 4 }}>
+                              <div style={{ height: 4, background: "#f1f5f9", borderRadius: 4, overflow: "hidden", width: 240 }}>
+                                <div style={{
+                                  height: "100%",
+                                  width: `${Math.min(100, (jobHoursTotal / Number(row.totalHours)) * 100)}%`,
+                                  background: mismatch ? "#f59e0b" : jobHoursTotal === 0 ? "#e2e8f0" : "#22c55e",
+                                  borderRadius: 4, transition: "width 0.2s"
+                                }} />
+                              </div>
+                              <span style={{ fontSize: 10, color: mismatch ? "#f59e0b" : "#94a3b8" }}>
+                                {jobHoursTotal.toFixed(1)} / {Number(row.totalHours).toFixed(1)}h allocated
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                    }
+                  </td>
+
+                  {/* Comments */}
+                  <td style={{ ...cellStyle, paddingTop: 10 }}>
+                    {!row.isRDO && (
+                      <input
+                        type="text"
+                        value={row.comment || ""}
+                        onChange={(e) => updateRowField(i, "comment", e.target.value)}
+                        placeholder="optional note…"
+                        style={{ ...inputBase, padding: "4px 8px", width: 150 }}
+                      />
+                    )}
+                  </td>
+
+                  {/* Overtime */}
+                  <td style={{ ...cellStyle, paddingTop: 10 }}>
+                    {!row.isRDO && (
+                      <select
+                        value={row.overtimeType || ""}
+                        onChange={(e) => updateRowField(i, "overtimeType", e.target.value)}
+                        style={{ ...inputBase, padding: "4px 8px", minWidth: 130 }}
+                      >
+                        <option value="">— none —</option>
+                        <option value="Ordinary">Ordinary</option>
+                        <option value="Overtime">Overtime</option>
+                        <option value="Overtime 1.5x">Overtime 1.5x</option>
+                        <option value="Overtime 2x">Overtime 2x</option>
+                      </select>
+                    )}
+                  </td>
+
+                  {/* Leave / Other */}
+                  <td style={{ ...cellStyle, paddingTop: 10 }}>
+                    {!row.isRDO && (
+                      <select
+                        value={row.leaveType}
+                        onChange={(e) => updateRowField(i, "leaveType", e.target.value)}
+                        style={{ ...inputBase, padding: "4px 8px", minWidth: 140 }}
+                      >
+                        <option value="">— none —</option>
+                        {LEAVE_TYPES.map((lt) => <option key={lt} value={lt}>{lt}</option>)}
+                      </select>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
           <tfoot>
-            <tr style={{ borderTop: "2px solid #e2e8f0" }}>
+            <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
               <td colSpan={2} style={{ padding: "10px 12px", fontWeight: 700, color: "#1e293b", fontSize: 13 }}>Total Hours</td>
-              <td style={{ padding: "10px 12px", fontWeight: 700, color: totalHours === 76 ? "#16a34a" : "#dc2626", fontSize: 15 }}>{Number(totalHours).toFixed(1)}h</td>
-              <td colSpan={2} style={{ padding: "10px 12px", fontSize: 12, color: "#94a3b8" }}>
+              <td style={{ padding: "10px 12px", fontWeight: 700, color: totalHours === 76 ? "#16a34a" : "#dc2626", fontSize: 15 }}>
+                {Number(totalHours).toFixed(1)}h
+              </td>
+              <td colSpan={4} style={{ padding: "10px 12px", fontSize: 12, color: "#94a3b8" }}>
                 {totalHours === 76 ? "✓ Standard fortnight" : `Expected 76h – ${totalHours < 76 ? "short by" : "over by"} ${Math.abs(76 - totalHours).toFixed(1)}h`}
               </td>
             </tr>
@@ -306,8 +479,7 @@ function TimesheetForm({ onSubmit, lockedEmployee }) {
         <button onClick={handleSubmit} style={{ padding: "10px 28px", background: "#1e293b", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" }}>
           Submit Timesheet
         </button>
-        <button onClick={() => setRows(FORTNIGHT_TEMPLATE.map((d) => ({ day: d.day, week: d.week, isRDO: d.isRDO || false, hours: d.defaultHours, jobCode: "", leaveType: "" })))}
-          style={{ padding: "10px 20px", background: "#fff", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 14, fontFamily: "inherit" }}>
+        <button onClick={resetRows} style={{ padding: "10px 20px", background: "#fff", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 14, fontFamily: "inherit" }}>
           Reset
         </button>
       </div>
@@ -321,13 +493,15 @@ function ReviewPage({ entries }) {
 
   const exportCSV = () => {
     if (!filtered.length) return alert("No entries to export.");
-    const headers = ["Employee", "Type", "Period Start", "Day", "Week", "Hours", "Job Code", "Leave Type", "Submitted At"];
+    const headers = ["Employee", "Type", "Period Start", "Day", "Week", "Hours", "Job Allocations", "Comments", "Overtime", "Leave Type", "Submitted At"];
     const lines = [headers.join(",")];
     filtered.forEach((e) => {
       e.rows.forEach((r) => {
+        const jobs = r.jobEntries || (r.jobCode ? [{ jobCode: r.jobCode, hours: r.hours }] : []);
+        const jobSummary = jobs.filter(je => je.jobCode).map(je => `${je.jobCode}(${je.hours}h)`).join("; ") || "";
         lines.push([
           e.employee?.name, e.employee?.type, e.periodStart,
-          r.day, r.week, r.hours, r.jobCode || "", r.leaveType || "",
+          r.day, r.week, r.totalHours || r.hours || 0, jobSummary, r.comment || "", r.overtimeType || "", r.leaveType || "",
           new Date(e.submittedAt).toLocaleString()
         ].join(","));
       });
@@ -371,28 +545,48 @@ function ReviewPage({ entries }) {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr style={{ background: "#f8fafc" }}>
-                  {["Day", "Hrs", "Job Code", "Leave / Other"].map((h) => (
+                  {["Day", "Total Hrs", "Job Allocations", "Comments", "Overtime", "Leave / Other"].map((h) => (
                     <th key={h} style={{ padding: "7px 16px", textAlign: "left", color: "#64748b", fontWeight: 600, borderBottom: "1px solid #f1f5f9" }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {entry.rows.filter((r) => !r.isRDO || r.leaveType).map((r, j) => (
-                  <tr key={j} style={{ borderBottom: "1px solid #f8fafc" }}>
-                    <td style={{ padding: "6px 16px", color: "#475569" }}>{r.day} (Wk {r.week})</td>
-                    <td style={{ padding: "6px 16px", fontWeight: 600, color: "#1e293b" }}>{r.isRDO ? "RDO" : `${r.hours}h`}</td>
-                    <td style={{ padding: "6px 16px" }}>
-                      {r.jobCode
-                        ? <span style={{ background: "#dbeafe", color: "#1d4ed8", borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>{r.jobCode}</span>
-                        : <span style={{ color: "#cbd5e1" }}>—</span>}
-                    </td>
-                    <td style={{ padding: "6px 16px" }}>
-                      {r.leaveType
-                        ? <span style={{ background: "#fef9c3", color: "#92400e", borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>{r.leaveType}</span>
-                        : <span style={{ color: "#cbd5e1" }}>—</span>}
-                    </td>
-                  </tr>
-                ))}
+                {entry.rows.filter((r) => !r.isRDO || r.leaveType).map((r, j) => {
+                  const jobs = r.jobEntries || (r.jobCode ? [{ jobCode: r.jobCode, hours: r.hours }] : []);
+                  return (
+                    <tr key={j} style={{ borderBottom: "1px solid #f8fafc", verticalAlign: "top" }}>
+                      <td style={{ padding: "8px 16px", color: "#475569" }}>{r.day} (Wk {r.week})</td>
+                      <td style={{ padding: "8px 16px", fontWeight: 600, color: "#1e293b" }}>{r.isRDO ? "RDO" : `${r.totalHours || r.hours || 0}h`}</td>
+                      <td style={{ padding: "8px 16px" }}>
+                        {r.isRDO ? <span style={{ color: "#cbd5e1" }}>—</span>
+                          : jobs.filter(je => je.jobCode).length > 0
+                            ? <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                {jobs.filter(je => je.jobCode).map((je, k) => (
+                                  <div key={k} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    <span style={{ background: "#dbeafe", color: "#1d4ed8", borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>{je.jobCode}</span>
+                                    <span style={{ fontSize: 11, color: "#64748b" }}>{je.hours}h</span>
+                                  </div>
+                                ))}
+                              </div>
+                            : <span style={{ color: "#cbd5e1" }}>—</span>
+                        }
+                      </td>
+                      <td style={{ padding: "8px 16px", color: "#475569", fontStyle: "italic", fontSize: 11 }}>
+                        {r.comment || <span style={{ color: "#cbd5e1" }}>—</span>}
+                      </td>
+                      <td style={{ padding: "8px 16px" }}>
+                        {r.overtimeType
+                          ? <span style={{ background: "#fef3c7", color: "#b45309", borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>{r.overtimeType}</span>
+                          : <span style={{ color: "#cbd5e1" }}>—</span>}
+                      </td>
+                      <td style={{ padding: "8px 16px" }}>
+                        {r.leaveType
+                          ? <span style={{ background: "#fef9c3", color: "#92400e", borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>{r.leaveType}</span>
+                          : <span style={{ color: "#cbd5e1" }}>—</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -402,46 +596,538 @@ function ReviewPage({ entries }) {
   );
 }
 
-function JobRegister() {
+function JobRegister({ importedJobs, setImportedJobs }) {
+  const [showImport, setShowImport] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [parseResult, setParseResult] = useState(null);
+  const [importError, setImportError] = useState("");
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  const allJobs = [...JOBS, ...importedJobs];
+  const filtered = allJobs.filter(j => {
+    const s = search.toLowerCase();
+    const matchSearch = !s || j.id.toLowerCase().includes(s) || (j.description || "").toLowerCase().includes(s) || (j.label || "").toLowerCase().includes(s);
+    const matchStatus = statusFilter === "all" || j.status === statusFilter;
+    return matchSearch && matchStatus;
+  });
+
+  // ── MYOB CSV parser ──────────────────────────────────────────────────────
+  const parseCSV = (text) => {
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) return { jobs: [], error: "File is empty or has no data rows." };
+
+    const splitCSVLine = (line) => {
+      const cells = []; let cur = "", inQ = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') { inQ = !inQ; }
+        else if (ch === ',' && !inQ) { cells.push(cur.trim()); cur = ""; }
+        else { cur += ch; }
+      }
+      cells.push(cur.trim());
+      return cells.map(c => c.replace(/^"|"$/g, "").trim());
+    };
+
+    const headers = splitCSVLine(lines[0]).map(h => h.toLowerCase());
+
+    const col = (...names) => {
+      for (const n of names) { const i = headers.indexOf(n.toLowerCase()); if (i !== -1) return i; }
+      return -1;
+    };
+
+    const iJobNo   = col("job number","job no","job no.","job id","number","jobno");
+    const iName    = col("name","job name","title");
+    const iDesc    = col("description","notes","detail","long description","job description");
+    const iStatus  = col("status","job status","active","is active");
+    const iMgr     = col("manager","job manager","contact","responsible");
+    const iBudget  = col("budget","budgeted amount","job budget","estimated amount");
+    const iHdr     = col("header job","header","parent job","parent");
+
+    if (iJobNo === -1 && iName === -1) {
+      return { jobs: [], error: "No 'Job Number' or 'Name' column found. Export from MYOB: Lists → Jobs → Export." };
+    }
+
+    const jobs = [];
+    for (let i = 1; i < lines.length; i++) {
+      if (!lines[i].trim()) continue;
+      const c = splitCSVLine(lines[i]);
+      const get = (idx) => (idx !== -1 && idx < c.length) ? c[idx] : "";
+      const jobNo = get(iJobNo);
+      const name  = get(iName);
+      if (!jobNo && !name) continue;
+
+      const rawStatus = get(iStatus).toLowerCase();
+      const status = (rawStatus === "closed" || rawStatus === "inactive" || rawStatus === "false" || rawStatus === "no") ? "closed" : "open";
+
+      const id = jobNo || name;
+      const description = get(iDesc) || name || "";
+      jobs.push({ id, label: name ? `${id} – ${name}` : id, description, status, manager: get(iMgr), budget: get(iBudget), headerJob: get(iHdr), source: "myob" });
+    }
+
+    if (!jobs.length) return { jobs: [], error: "No valid job rows found after the header." };
+    return { jobs, error: null };
+  };
+
+  const handleFile = (file) => {
+    setImportError(""); setParseResult(null);
+    if (!file) return;
+    if (!file.name.match(/\.(csv|txt)$/i)) { setImportError("Please upload a .csv or .txt file."); return; }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = parseCSV(e.target.result);
+      if (result.error && !result.jobs.length) { setImportError(result.error); }
+      else { setParseResult({ ...result, filename: file.name }); }
+    };
+    reader.readAsText(file);
+  };
+
+  const confirmImport = () => {
+    if (!parseResult?.jobs?.length) return;
+    setImportedJobs(prev => {
+      const kept = prev.filter(p => !parseResult.jobs.find(nj => nj.id === p.id));
+      const next = [...kept, ...parseResult.jobs];
+      try { localStorage.setItem("drc_imported_jobs", JSON.stringify(next)); } catch {}
+      return next;
+    });
+    setShowImport(false); setParseResult(null);
+  };
+
+  const clearImported = () => {
+    setImportedJobs([]);
+    try { localStorage.removeItem("drc_imported_jobs"); } catch {}
+    setConfirmClear(false);
+  };
+
+  const downloadTemplate = () => {
+    const csv = [
+      "Job Number,Name,Description,Status,Manager,Budget,Header Job",
+      "AP2601101,Switchboard Install A,Main switchboard installation at site,Open,David Webb,15000,",
+      "AP2601102,Panel Wiring B,Panel wiring and terminations,Open,Brett Campbell,8000,",
+      "AP2602103,Site Inspection C,Periodic site inspection,Open,Dennis Rozanic,,",
+      "AP2510201,Completed Project X,Legacy project – finished,Closed,,,",
+    ].join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    a.download = "myob_jobs_template.csv"; a.click();
+  };
+
+  const pill = (active) => ({
+    padding: "5px 14px", border: "none", borderRadius: 6, cursor: "pointer",
+    fontSize: 12, fontWeight: 600, fontFamily: "inherit",
+    background: active ? "#1e293b" : "#f1f5f9", color: active ? "#fff" : "#64748b",
+  });
+
   return (
     <div style={{ padding: "28px 24px" }}>
-      <h2 style={{ fontSize: 20, fontWeight: 700, color: "#0f172a", marginBottom: 6 }}>Job Register</h2>
-      <p style={{ color: "#64748b", fontSize: 13, marginBottom: 20 }}>Format: AP{"{YY}{MM}{SEQ}"} — e.g. AP2602101 = Project, 2026, February, Job #01</p>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-        <thead>
-          <tr style={{ background: "#f8fafc" }}>
-            {["Job Number", "Description", "Status"].map((h) => (
-              <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontWeight: 600, color: "#475569", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+
+      {/* Import modal */}
+      {showImport && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000 }}>
+          <div style={{ background:"#fff", borderRadius:16, padding:32, width:560, maxHeight:"90vh", overflowY:"auto", boxShadow:"0 20px 60px rgba(0,0,0,0.25)" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
+              <h3 style={{ fontSize:17, fontWeight:700, color:"#0f172a", margin:0 }}>Import Jobs from MYOB</h3>
+              <button onClick={() => { setShowImport(false); setParseResult(null); setImportError(""); }}
+                style={{ background:"none", border:"none", fontSize:22, cursor:"pointer", color:"#94a3b8", lineHeight:1 }}>×</button>
+            </div>
+
+            {/* MYOB instructions */}
+            <div style={{ background:"#f0f9ff", border:"1px solid #bae6fd", borderRadius:10, padding:"12px 16px", marginBottom:20, fontSize:12, color:"#0369a1", lineHeight:1.8 }}>
+              <strong>How to export from MYOB AccountRight:</strong><br />
+              1. Go to <b>Lists → Jobs</b><br />
+              2. Click <b>Export</b> button (top toolbar) → <b>Export Data</b><br />
+              3. Choose <b>Tab-delimited (.txt)</b> or <b>CSV</b> and save the file<br />
+              4. Upload the file below — columns detected automatically
+              <div style={{ marginTop:10 }}>
+                <button onClick={downloadTemplate} style={{ background:"none", border:"1px solid #7dd3fc", borderRadius:6, color:"#0369a1", fontSize:11, padding:"4px 12px", cursor:"pointer", fontFamily:"inherit", fontWeight:600 }}>
+                  ↓ Download sample CSV template
+                </button>
+              </div>
+            </div>
+
+            {/* Supported columns info */}
+            <div style={{ background:"#f8fafc", border:"1px solid #e2e8f0", borderRadius:8, padding:"10px 14px", marginBottom:16, fontSize:11, color:"#64748b" }}>
+              <strong style={{ color:"#475569" }}>Supported MYOB columns (auto-detected):</strong>&nbsp;
+              Job Number · Name · Description · Status · Manager · Budget · Header Job
+            </div>
+
+            {/* Drop zone */}
+            {!parseResult && (
+              <>
+                <div
+                  onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]); }}
+                  onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                  onDragLeave={() => setDragOver(false)}
+                  onClick={() => document.getElementById("job-file-inp").click()}
+                  style={{ border:`2px dashed ${dragOver ? "#2563eb" : "#cbd5e1"}`, borderRadius:12, padding:"40px 20px", textAlign:"center", background: dragOver ? "#eff6ff" : "#f8fafc", cursor:"pointer", transition:"all 0.15s" }}
+                >
+                  <div style={{ fontSize:36, marginBottom:10 }}>📂</div>
+                  <div style={{ fontWeight:600, color:"#1e293b", marginBottom:4 }}>Drop your MYOB export here</div>
+                  <div style={{ fontSize:12, color:"#94a3b8" }}>or click to browse · .csv and .txt supported</div>
+                  <input id="job-file-inp" type="file" accept=".csv,.txt" style={{ display:"none" }}
+                    onChange={(e) => handleFile(e.target.files[0])} />
+                </div>
+                {importError && (
+                  <div style={{ marginTop:12, background:"#fef2f2", border:"1px solid #fecaca", borderRadius:8, padding:"10px 14px", fontSize:12, color:"#dc2626" }}>
+                    ⚠ {importError}
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Preview */}
+            {parseResult && (
+              <div>
+                <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:14, padding:"12px 14px", background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:10 }}>
+                  <span style={{ fontSize:24 }}>✅</span>
+                  <div>
+                    <div style={{ fontWeight:700, color:"#0f172a", fontSize:14 }}>{parseResult.filename}</div>
+                    <div style={{ fontSize:12, color:"#64748b" }}>
+                      {parseResult.jobs.length} jobs found · {parseResult.jobs.filter(j=>j.status==="open").length} open · {parseResult.jobs.filter(j=>j.status==="closed").length} closed
+                    </div>
+                  </div>
+                </div>
+                {parseResult.error && (
+                  <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:8, padding:"8px 12px", fontSize:12, color:"#92400e", marginBottom:12 }}>⚠ {parseResult.error}</div>
+                )}
+                <div style={{ border:"1px solid #e2e8f0", borderRadius:10, overflow:"hidden", maxHeight:220, overflowY:"auto", marginBottom:16 }}>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                    <thead>
+                      <tr style={{ background:"#f8fafc" }}>
+                        {["Job No.", "Description", "Manager", "Status"].map(h => (
+                          <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontWeight:600, color:"#475569", borderBottom:"1px solid #e2e8f0" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {parseResult.jobs.map((j, i) => (
+                        <tr key={i} style={{ borderBottom:"1px solid #f1f5f9", background: i%2===0?"#fff":"#fafcff" }}>
+                          <td style={{ padding:"7px 12px", fontFamily:"monospace", fontWeight:600, color:"#1e293b", fontSize:11 }}>{j.id}</td>
+                          <td style={{ padding:"7px 12px", color:"#475569" }}>{j.description || "—"}</td>
+                          <td style={{ padding:"7px 12px", color:"#64748b" }}>{j.manager || "—"}</td>
+                          <td style={{ padding:"7px 12px" }}><JobBadge status={j.status} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ display:"flex", gap:10 }}>
+                  <button onClick={confirmImport} style={{ flex:1, padding:"11px", background:"#16a34a", color:"#fff", border:"none", borderRadius:8, fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                    ✓ Import {parseResult.jobs.length} Jobs
+                  </button>
+                  <button onClick={() => { setParseResult(null); setImportError(""); }} style={{ flex:1, padding:"11px", background:"#fff", color:"#64748b", border:"1px solid #e2e8f0", borderRadius:8, fontSize:14, cursor:"pointer", fontFamily:"inherit" }}>
+                    Upload different file
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Confirm clear modal */}
+      {confirmClear && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000 }}>
+          <div style={{ background:"#fff", borderRadius:16, padding:32, width:360, textAlign:"center", boxShadow:"0 20px 60px rgba(0,0,0,0.2)" }}>
+            <div style={{ fontSize:36, marginBottom:12 }}>🗑️</div>
+            <h3 style={{ fontSize:16, fontWeight:700, color:"#0f172a", marginBottom:8 }}>Clear all imported jobs?</h3>
+            <p style={{ fontSize:13, color:"#64748b", marginBottom:24 }}>
+              This removes all {importedJobs.length} MYOB-imported jobs. The {JOBS.length} built-in jobs remain.
+            </p>
+            <div style={{ display:"flex", gap:10 }}>
+              <button onClick={clearImported} style={{ flex:1, padding:"10px", background:"#dc2626", color:"#fff", border:"none", borderRadius:8, fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>Clear all</button>
+              <button onClick={() => setConfirmClear(false)} style={{ flex:1, padding:"10px", background:"#fff", color:"#64748b", border:"1px solid #e2e8f0", borderRadius:8, fontSize:14, cursor:"pointer", fontFamily:"inherit" }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Page header */}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:20, flexWrap:"wrap", gap:12 }}>
+        <div>
+          <h2 style={{ fontSize:20, fontWeight:700, color:"#0f172a", margin:0 }}>Job Register</h2>
+          <p style={{ color:"#64748b", fontSize:13, margin:"4px 0 0" }}>
+            {allJobs.length} total · {allJobs.filter(j=>j.status==="open").length} open · {importedJobs.length} imported from MYOB
+          </p>
+        </div>
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search jobs…"
+            style={{ padding:"8px 12px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:13, fontFamily:"inherit", color:"#1e293b", width:180 }} />
+          <div style={{ display:"flex", gap:4 }}>
+            {["all","open","closed"].map(s => (
+              <button key={s} onClick={() => setStatusFilter(s)} style={pill(statusFilter===s)}>
+                {s.charAt(0).toUpperCase()+s.slice(1)}
+              </button>
             ))}
-          </tr>
-        </thead>
-        <tbody>
-          {JOBS.map((j, i) => (
-            <tr key={j.id} style={{ background: i % 2 === 0 ? "#fff" : "#fafcff", borderBottom: "1px solid #f1f5f9" }}>
-              <td style={{ padding: "10px 14px", fontWeight: 600, color: "#1e293b", fontFamily: "monospace" }}>{j.id}</td>
-              <td style={{ padding: "10px 14px", color: "#475569" }}>{j.label.split("–")[1]?.trim()}</td>
-              <td style={{ padding: "10px 14px" }}><JobBadge status={j.status} /></td>
+          </div>
+          {importedJobs.length > 0 && (
+            <button onClick={() => setConfirmClear(true)} style={{ padding:"8px 14px", background:"#fff", color:"#dc2626", border:"1px solid #fecaca", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+              Clear Imported
+            </button>
+          )}
+          <button onClick={() => setShowImport(true)} style={{ padding:"8px 20px", background:"#2563eb", color:"#fff", border:"none", borderRadius:8, fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+            ↑ Import from MYOB
+          </button>
+        </div>
+      </div>
+
+      {/* Job table */}
+      <div style={{ border:"1px solid #e2e8f0", borderRadius:12, overflow:"hidden" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+          <thead>
+            <tr style={{ background:"#f8fafc" }}>
+              {["Job Number","Description","Manager","Budget","Status","Source"].map(h => (
+                <th key={h} style={{ padding:"10px 14px", textAlign:"left", fontWeight:600, color:"#475569", borderBottom:"1px solid #e2e8f0", whiteSpace:"nowrap" }}>{h}</th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-      <div style={{ marginTop: 24, padding: 16, background: "#f0fdf4", borderRadius: 10, border: "1px solid #bbf7d0" }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: "#166534", marginBottom: 4 }}>Job Numbering Convention</div>
-        <div style={{ fontSize: 12, color: "#15803d", lineHeight: 1.7 }}>
-          <b>AP</b> = Project &nbsp;|&nbsp; <b>YY</b> = Year (e.g. 26 = 2026) &nbsp;|&nbsp; <b>MM</b> = Month set up (e.g. 02 = February) &nbsp;|&nbsp; <b>SEQ</b> = Sequence number
+          </thead>
+          <tbody>
+            {filtered.length === 0
+              ? <tr><td colSpan={6} style={{ padding:40, textAlign:"center", color:"#94a3b8" }}>No jobs match your search.</td></tr>
+              : filtered.map((j, i) => (
+                <tr key={j.id} style={{ background: i%2===0?"#fff":"#fafcff", borderBottom:"1px solid #f1f5f9" }}>
+                  <td style={{ padding:"10px 14px", fontWeight:700, fontFamily:"monospace", fontSize:12, color:"#1e293b" }}>{j.id}</td>
+                  <td style={{ padding:"10px 14px", color:"#475569" }}>{j.description || j.label?.split("–")[1]?.trim() || "—"}</td>
+                  <td style={{ padding:"10px 14px", color:"#64748b", fontSize:12 }}>{j.manager || "—"}</td>
+                  <td style={{ padding:"10px 14px", color:"#64748b", fontSize:12, fontFamily:"monospace" }}>
+                    {j.budget ? `$${Number(j.budget.replace(/[^0-9.]/g,"")).toLocaleString()}` : "—"}
+                  </td>
+                  <td style={{ padding:"10px 14px" }}><JobBadge status={j.status} /></td>
+                  <td style={{ padding:"10px 14px" }}>
+                    {j.source === "myob"
+                      ? <span style={{ background:"#eff6ff", color:"#2563eb", borderRadius:5, padding:"2px 9px", fontSize:11, fontWeight:700 }}>MYOB</span>
+                      : <span style={{ background:"#f1f5f9", color:"#64748b", borderRadius:5, padding:"2px 9px", fontSize:11, fontWeight:600 }}>Built-in</span>
+                    }
+                  </td>
+                </tr>
+              ))
+            }
+          </tbody>
+        </table>
+      </div>
+
+      {/* Convention note */}
+      <div style={{ marginTop:20, padding:16, background:"#f0fdf4", borderRadius:10, border:"1px solid #bbf7d0" }}>
+        <div style={{ fontSize:13, fontWeight:600, color:"#166534", marginBottom:4 }}>MYOB Job Numbering (DRC Format)</div>
+        <div style={{ fontSize:12, color:"#15803d", lineHeight:1.7 }}>
+          <b>AP</b> = Project prefix &nbsp;|&nbsp; <b>YY</b> = Year (e.g. 26 = 2026) &nbsp;|&nbsp; <b>MM</b> = Month created (e.g. 02 = Feb) &nbsp;|&nbsp; <b>SEQ</b> = Sequence — e.g. <b>AP2602101</b><br />
+          Imported open jobs appear immediately in the employee timesheet job dropdown.
         </div>
       </div>
     </div>
   );
 }
 
-function EmployeesPage() {
+function EmployeesPage({ extraEmployees, setExtraEmployees, passwords, setPasswords }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editTarget, setEditTarget] = useState(null); // null = add new, else employee object
+  const [search, setSearch] = useState("");
+  const [form, setForm] = useState({ name: "", email: "", type: "permanent", contract: "full-time" });
+  const [formError, setFormError] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const allEmployees = [...EMPLOYEES, ...extraEmployees];
+  const filtered = allEmployees.filter(e =>
+    e.name.toLowerCase().includes(search.toLowerCase()) ||
+    (e.email || "").toLowerCase().includes(search.toLowerCase())
+  );
+
+  const openAdd = () => {
+    setForm({ name: "", email: "", type: "permanent", contract: "full-time" });
+    setEditTarget(null);
+    setFormError("");
+    setShowForm(true);
+  };
+
+  const openEdit = (emp) => {
+    setForm({ name: emp.name, email: emp.email || "", type: emp.type, contract: emp.contract });
+    setEditTarget(emp);
+    setFormError("");
+    setShowForm(true);
+  };
+
+  const handleSave = () => {
+    if (!form.name.trim()) { setFormError("Name is required."); return; }
+    if (editTarget) {
+      // Edit existing extra employee
+      setExtraEmployees(prev => prev.map(e => e.id === editTarget.id
+        ? { ...e, name: form.name.trim(), email: form.email.trim(), type: form.type, contract: form.contract }
+        : e
+      ));
+    } else {
+      // Add new
+      const newId = "X" + Date.now();
+      setExtraEmployees(prev => [...prev, {
+        id: newId,
+        name: form.name.trim(),
+        email: form.email.trim(),
+        type: form.type,
+        contract: form.contract,
+      }]);
+      // Set default password
+      setPasswords(prev => {
+        const updated = { ...prev, [newId]: "drc2026" };
+        try { localStorage.setItem("drc_passwords", JSON.stringify(updated)); } catch {}
+        return updated;
+      });
+    }
+    setShowForm(false);
+    setEditTarget(null);
+  };
+
+  const handleDelete = (emp) => {
+    if (EMPLOYEES.find(e => e.id === emp.id)) return; // can't delete built-in
+    setExtraEmployees(prev => prev.filter(e => e.id !== emp.id));
+    setPasswords(prev => {
+      const updated = { ...prev };
+      delete updated[emp.id];
+      try { localStorage.setItem("drc_passwords", JSON.stringify(updated)); } catch {}
+      return updated;
+    });
+    setConfirmDelete(null);
+  };
+
+  const isNew = (emp) => extraEmployees.some(e => e.id === emp.id);
+
+  const inputStyle = {
+    width: "100%", padding: "9px 12px", border: "1px solid #e2e8f0",
+    borderRadius: 8, fontSize: 13, fontFamily: "inherit", color: "#1e293b",
+    background: "#fff", boxSizing: "border-box",
+  };
+
   return (
     <div style={{ padding: "28px 24px" }}>
-      <h2 style={{ fontSize: 20, fontWeight: 700, color: "#0f172a", marginBottom: 20 }}>Employees</h2>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
-        {EMPLOYEES.map((emp) => (
-          <div key={emp.id} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }}>
+      {/* Header row */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h2 style={{ fontSize: 20, fontWeight: 700, color: "#0f172a", margin: 0 }}>Employees</h2>
+          <p style={{ fontSize: 13, color: "#64748b", margin: "4px 0 0" }}>{allEmployees.length} total · {filtered.length} shown</p>
+        </div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search by name or email…"
+            style={{ ...inputStyle, width: 220, padding: "8px 12px" }}
+          />
+          <button onClick={openAdd} style={{
+            padding: "9px 20px", background: "#111827", color: "#fff",
+            border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13,
+            fontWeight: 600, fontFamily: "inherit", whiteSpace: "nowrap",
+          }}>
+            + Add Employee
+          </button>
+        </div>
+      </div>
+
+      {/* Add / Edit Modal */}
+      {showForm && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000
+        }}>
+          <div style={{ background: "#fff", borderRadius: 16, padding: 32, width: 420, boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+            <h3 style={{ fontSize: 17, fontWeight: 700, color: "#0f172a", marginBottom: 20 }}>
+              {editTarget ? "Edit Employee" : "Add New Employee"}
+            </h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "block", marginBottom: 6 }}>Full Name *</label>
+                <input value={form.name} onChange={e => { setForm(f => ({ ...f, name: e.target.value })); setFormError(""); }}
+                  placeholder="e.g. Sarah Johnson" style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "block", marginBottom: 6 }}>Email</label>
+                <input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                  placeholder="e.g. sarah@drcswitchboards.com.au" style={inputStyle} />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "block", marginBottom: 6 }}>Employment Type</label>
+                  <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))} style={inputStyle}>
+                    <option value="permanent">Permanent</option>
+                    <option value="labour-hire">Labour Hire</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "block", marginBottom: 6 }}>Contract</label>
+                  <select value={form.contract} onChange={e => setForm(f => ({ ...f, contract: e.target.value }))} style={inputStyle}>
+                    <option value="full-time">Full-time</option>
+                    <option value="part-time">Part-time</option>
+                    <option value="casual">Casual</option>
+                  </select>
+                </div>
+              </div>
+              {!editTarget && (
+                <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#166534" }}>
+                  Default password will be set to <strong>drc2026</strong>. Employee must change it on first login.
+                </div>
+              )}
+              {formError && (
+                <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#dc2626" }}>
+                  {formError}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+                <button onClick={handleSave} style={{
+                  flex: 1, padding: "11px", background: "#111827", color: "#fff",
+                  border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit"
+                }}>
+                  {editTarget ? "Save Changes" : "Add Employee"}
+                </button>
+                <button onClick={() => { setShowForm(false); setEditTarget(null); }} style={{
+                  flex: 1, padding: "11px", background: "#fff", color: "#64748b",
+                  border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, cursor: "pointer", fontFamily: "inherit"
+                }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirm modal */}
+      {confirmDelete && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000
+        }}>
+          <div style={{ background: "#fff", borderRadius: 16, padding: 32, width: 360, boxShadow: "0 20px 60px rgba(0,0,0,0.2)", textAlign: "center" }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>🗑️</div>
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: "#0f172a", marginBottom: 8 }}>Remove employee?</h3>
+            <p style={{ fontSize: 13, color: "#64748b", marginBottom: 24 }}>
+              <strong>{confirmDelete.name}</strong> will be removed from the portal. This cannot be undone.
+            </p>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => handleDelete(confirmDelete)} style={{
+                flex: 1, padding: "10px", background: "#dc2626", color: "#fff",
+                border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit"
+              }}>Remove</button>
+              <button onClick={() => setConfirmDelete(null)} style={{
+                flex: 1, padding: "10px", background: "#fff", color: "#64748b",
+                border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, cursor: "pointer", fontFamily: "inherit"
+              }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Employee grid */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 16 }}>
+        {filtered.map((emp) => (
+          <div key={emp.id} style={{
+            background: "#fff", border: `1px solid ${isNew(emp) ? "#bbf7d0" : "#e2e8f0"}`,
+            borderRadius: 12, padding: 20, position: "relative"
+          }}>
+            {isNew(emp) && (
+              <span style={{
+                position: "absolute", top: 12, right: 12,
+                background: "#dcfce7", color: "#166534", fontSize: 10,
+                fontWeight: 700, padding: "2px 8px", borderRadius: 20, letterSpacing: 0.5
+              }}>NEW</span>
+            )}
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
               <div style={{
                 width: 44, height: 44, borderRadius: "50%",
@@ -452,8 +1138,8 @@ function EmployeesPage() {
               }}>
                 {emp.name.slice(0, 2).toUpperCase()}
               </div>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 15, color: "#1e293b" }}>{emp.name}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 15, color: "#1e293b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{emp.name}</div>
                 <div style={{ fontSize: 12, color: "#94a3b8" }}>ID: {emp.id}</div>
               </div>
             </div>
@@ -461,15 +1147,34 @@ function EmployeesPage() {
               <Badge type={emp.type} />
               <Badge type={emp.contract} />
             </div>
-            {emp.email && <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>{emp.email}</div>}
+            {emp.email && <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4, wordBreak: "break-all" }}>{emp.email}</div>}
             {emp.type === "labour-hire" && (
-              <div style={{ marginTop: 12, padding: "8px 12px", background: "#fffbeb", borderRadius: 8, fontSize: 12, color: "#92400e", border: "1px solid #fde68a" }}>
+              <div style={{ marginTop: 10, padding: "7px 10px", background: "#fffbeb", borderRadius: 7, fontSize: 11, color: "#92400e", border: "1px solid #fde68a" }}>
                 Timesheet required for labour hire invoice reconciliation
+              </div>
+            )}
+            {/* Action buttons — only for added employees */}
+            {isNew(emp) && (
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <button onClick={() => openEdit(emp)} style={{
+                  flex: 1, padding: "6px 0", background: "#f8fafc", border: "1px solid #e2e8f0",
+                  borderRadius: 7, fontSize: 12, cursor: "pointer", fontFamily: "inherit", color: "#475569", fontWeight: 600
+                }}>✏️ Edit</button>
+                <button onClick={() => setConfirmDelete(emp)} style={{
+                  flex: 1, padding: "6px 0", background: "#fef2f2", border: "1px solid #fecaca",
+                  borderRadius: 7, fontSize: 12, cursor: "pointer", fontFamily: "inherit", color: "#dc2626", fontWeight: 600
+                }}>🗑️ Remove</button>
               </div>
             )}
           </div>
         ))}
+        {filtered.length === 0 && (
+          <div style={{ gridColumn: "1/-1", textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
+            No employees match your search.
+          </div>
+        )}
       </div>
+
       <div style={{ marginTop: 24, padding: 16, background: "#eff6ff", borderRadius: 10, border: "1px solid #bfdbfe" }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: "#1d4ed8", marginBottom: 4 }}>9-Day Fortnight Arrangement</div>
         <div style={{ fontSize: 12, color: "#1e40af", lineHeight: 1.7 }}>
@@ -518,7 +1223,7 @@ function AppHeader({ user, onLogout, onChangePassword }) {
 }
 
 // ── Login screen ────────────────────────────────────────────────────────────
-function LoginScreen({ onLogin, passwords }) {
+function LoginScreen({ onLogin, passwords, extraEmployees = [] }) {
   const [mode, setMode] = useState(null); // null | "admin" | "employee"
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -534,7 +1239,8 @@ function LoginScreen({ onLogin, passwords }) {
   };
 
   const handleEmployeeLogin = () => {
-    const emp = EMPLOYEES.find(e => e.id === employeeId);
+    const allEmps = [...EMPLOYEES, ...extraEmployees];
+    const emp = allEmps.find(e => e.id === employeeId);
     if (!emp) { setError("Employee not found. Please select your name."); return; }
     const stored = (passwords && passwords[emp.id]) || "drc2026";
     if (password === stored) {
@@ -626,7 +1332,7 @@ function LoginScreen({ onLogin, passwords }) {
                 <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "block", marginBottom: 6 }}>Your Name</label>
                 <select value={employeeId} onChange={e => { setEmployeeId(e.target.value); setError(""); }} style={{ ...inputStyle }}>
                   <option value="">Select your name…</option>
-                  {EMPLOYEES.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                  {[...EMPLOYEES, ...extraEmployees].map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                 </select>
               </div>
             )}
@@ -676,7 +1382,7 @@ function AdminNav({ current, onChange }) {
 }
 
 // ── Employee view (submit only their own timesheet) ─────────────────────────
-function EmployeePortal({ user, entries, onSubmit }) {
+function EmployeePortal({ user, entries, onSubmit, importedJobs = [] }) {
   const myEntries = entries.filter(e => e.employee?.id === user.id);
   const [view, setView] = useState("submit"); // "submit" | "history"
 
@@ -694,7 +1400,7 @@ function EmployeePortal({ user, entries, onSubmit }) {
         ))}
       </nav>
       {view === "submit"
-        ? <TimesheetForm onSubmit={onSubmit} lockedEmployee={user.id} />
+        ? <TimesheetForm onSubmit={onSubmit} lockedEmployee={user.id} importedJobs={importedJobs} />
         : (
           <div style={{ padding: "28px 24px" }}>
             <h2 style={{ fontSize: 20, fontWeight: 700, color: "#0f172a", marginBottom: 20 }}>My Submitted Timesheets</h2>
@@ -708,17 +1414,33 @@ function EmployeePortal({ user, entries, onSubmit }) {
                   </div>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                     <thead><tr style={{ background: "#f8fafc" }}>
-                      {["Day", "Hrs", "Job Code", "Leave"].map(h => <th key={h} style={{ padding: "7px 16px", textAlign: "left", color: "#64748b", fontWeight: 600, borderBottom: "1px solid #f1f5f9" }}>{h}</th>)}
+                      {["Day", "Total Hrs", "Job Allocations", "Comments", "Overtime", "Leave"].map(h => <th key={h} style={{ padding: "7px 16px", textAlign: "left", color: "#64748b", fontWeight: 600, borderBottom: "1px solid #f1f5f9" }}>{h}</th>)}
                     </tr></thead>
                     <tbody>
-                      {entry.rows.filter(r => !r.isRDO).map((r, j) => (
-                        <tr key={j} style={{ borderBottom: "1px solid #f8fafc" }}>
+                      {entry.rows.filter(r => !r.isRDO).map((r, j) => {
+                        const jobs = r.jobEntries || (r.jobCode ? [{ jobCode: r.jobCode, hours: r.hours }] : []);
+                        return (
+                        <tr key={j} style={{ borderBottom: "1px solid #f8fafc", verticalAlign: "top" }}>
                           <td style={{ padding: "6px 16px", color: "#475569" }}>{r.day}</td>
-                          <td style={{ padding: "6px 16px", fontWeight: 600 }}>{r.hours}h</td>
-                          <td style={{ padding: "6px 16px" }}>{r.jobCode ? <span style={{ background: "#dbeafe", color: "#1d4ed8", borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>{r.jobCode}</span> : <span style={{ color: "#cbd5e1" }}>—</span>}</td>
+                          <td style={{ padding: "6px 16px", fontWeight: 600 }}>{r.totalHours || r.hours || 0}h</td>
+                          <td style={{ padding: "6px 16px" }}>
+                            {jobs.filter(je => je.jobCode).length > 0
+                              ? <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                                  {jobs.filter(je => je.jobCode).map((je, k) => (
+                                    <div key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                                      <span style={{ background: "#dbeafe", color: "#1d4ed8", borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>{je.jobCode}</span>
+                                      <span style={{ fontSize: 11, color: "#64748b" }}>{je.hours}h</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              : <span style={{ color: "#cbd5e1" }}>—</span>}
+                          </td>
+                          <td style={{ padding: "6px 16px", color: "#475569", fontStyle: "italic", fontSize: 11 }}>{r.comment || <span style={{ color: "#cbd5e1" }}>—</span>}</td>
+                          <td style={{ padding: "6px 16px" }}>{r.overtimeType ? <span style={{ background: "#fef3c7", color: "#b45309", borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>{r.overtimeType}</span> : <span style={{ color: "#cbd5e1" }}>—</span>}</td>
                           <td style={{ padding: "6px 16px" }}>{r.leaveType ? <span style={{ background: "#fef9c3", color: "#92400e", borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>{r.leaveType}</span> : <span style={{ color: "#cbd5e1" }}>—</span>}</td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -824,6 +1546,29 @@ export default function App() {
   const [entries, setEntries] = useState([]);
   const [changingPassword, setChangingPassword] = useState(false);
 
+  const [importedJobs, setImportedJobs] = useState(() => {
+    try {
+      const stored = localStorage.getItem("drc_imported_jobs");
+      return stored ? JSON.parse(stored) : [];
+    } catch { return []; }
+  });
+
+  const [extraEmployees, setExtraEmployees] = useState(() => {
+    try {
+      const stored = localStorage.getItem("drc_extra_employees");
+      return stored ? JSON.parse(stored) : [];
+    } catch { return []; }
+  });
+
+  // Persist extraEmployees to localStorage whenever they change
+  const updateExtraEmployees = (updater) => {
+    setExtraEmployees(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      try { localStorage.setItem("drc_extra_employees", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+
   // Per-employee passwords stored in localStorage
   const [passwords, setPasswords] = useState(() => {
     try {
@@ -859,7 +1604,7 @@ export default function App() {
     setEntries((prev) => [...prev, entry]);
   };
 
-  if (!user) return <LoginScreen onLogin={handleLogin} passwords={passwords} />;
+  if (!user) return <LoginScreen onLogin={handleLogin} passwords={passwords} extraEmployees={extraEmployees} />;
 
   // Show password change screen
   if (changingPassword) return (
@@ -883,12 +1628,12 @@ export default function App() {
           <main>
             {tab === "dashboard" && <Dashboard entries={entries} />}
             {tab === "review" && <ReviewPage entries={entries} />}
-            {tab === "jobs" && <JobRegister />}
-            {tab === "employees" && <EmployeesPage />}
+            {tab === "jobs" && <JobRegister importedJobs={importedJobs} setImportedJobs={setImportedJobs} />}
+            {tab === "employees" && <EmployeesPage extraEmployees={extraEmployees} setExtraEmployees={updateExtraEmployees} passwords={passwords} setPasswords={setPasswords} />}
           </main>
         </>
       ) : (
-        <EmployeePortal user={user} entries={entries} onSubmit={handleSubmit} />
+        <EmployeePortal user={user} entries={entries} onSubmit={handleSubmit} importedJobs={importedJobs} />
       )}
     </div>
   );
