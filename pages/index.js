@@ -202,84 +202,101 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
   const [employee, setEmployee] = useState(lockedEmployee || "");
   const [periodStart, setPeriodStart] = useState("");
 
-  // Each day row holds: day info + an array of job entries + leave + comment
-  // jobEntries: [{ jobCode, hours }, ...]
-  const [rows, setRows] = useState(
+  // Data model: one row per JOB LINE (not per day)
+  // Each row: { day, week, isRDO, defaultHours, jobCode, hours, comment, overtimeType, leaveType, isAddLine }
+  // Days are grouped visually; the first row for a day shows the day label with rowSpan
+
+  const makeDefaultRows = () =>
     FORTNIGHT_TEMPLATE.map((d) => ({
       day: d.day,
       week: d.week,
       isRDO: d.isRDO || false,
-      totalHours: d.defaultHours,
-      jobEntries: [{ jobCode: "", hours: d.isRDO ? 0 : d.defaultHours }],
+      defaultHours: d.defaultHours,
+      jobCode: "",
+      hours: d.isRDO ? 0 : d.defaultHours,
       comment: "",
       overtimeType: "",
       leaveType: "",
-    }))
-  );
+    }));
 
-  // Sum of all job hours across all days
-  const totalHours = rows.reduce((s, r) => s + Number(r.totalHours || 0), 0);
+  const [rows, setRows] = useState(makeDefaultRows);
 
-  const updateRowField = (i, field, val) => {
+  // All open jobs (built-in + imported)
+  const allOpenJobs = [...openJobs, ...importedJobs.filter(j => j.status === "open")];
+
+  // Group rows by day key for rendering
+  // Returns array of { day, week, isRDO, defaultHours, lines: [rowIdx, ...] }
+  const groupedDays = () => {
+    const groups = [];
+    const seen = {};
+    rows.forEach((r, i) => {
+      const key = r.day + "_" + r.week;
+      if (seen[key] === undefined) {
+        seen[key] = groups.length;
+        groups.push({ day: r.day, week: r.week, isRDO: r.isRDO, defaultHours: r.defaultHours, lines: [i] });
+      } else {
+        groups[seen[key]].lines.push(i);
+      }
+    });
+    return groups;
+  };
+
+  const updateRow = (i, field, val) =>
     setRows(prev => prev.map((r, idx) => idx === i ? { ...r, [field]: val } : r));
+
+  const addLine = (dayKey, week) => {
+    setRows(prev => {
+      // Find last index belonging to this day
+      const dayRows = prev.map((r, i) => ({ r, i })).filter(({ r }) => r.day === dayKey && r.week === week);
+      const insertAfter = dayRows[dayRows.length - 1].i;
+      const template = prev[dayRows[0].i]; // inherit day/week/isRDO from first row of day
+      const newLine = { day: dayKey, week, isRDO: template.isRDO, defaultHours: template.defaultHours, jobCode: "", hours: 0, comment: "", overtimeType: "", leaveType: "" };
+      const next = [...prev];
+      next.splice(insertAfter + 1, 0, newLine);
+      return next;
+    });
   };
 
-  const updateJobEntry = (rowIdx, jobIdx, field, val) => {
-    setRows(prev => prev.map((r, i) => {
-      if (i !== rowIdx) return r;
-      const newEntries = r.jobEntries.map((je, j) =>
-        j === jobIdx ? { ...je, [field]: val } : je
-      );
-      // Recalculate totalHours from sum of job entry hours
-      const newTotal = newEntries.reduce((s, je) => s + Number(je.hours || 0), 0);
-      return { ...r, jobEntries: newEntries, totalHours: newTotal };
-    }));
+  const removeLine = (i) => {
+    setRows(prev => {
+      const day = prev[i].day, week = prev[i].week;
+      const dayCount = prev.filter(r => r.day === day && r.week === week).length;
+      if (dayCount <= 1) return prev; // keep at least one line per day
+      return prev.filter((_, idx) => idx !== i);
+    });
   };
 
-  const addJobEntry = (rowIdx) => {
-    setRows(prev => prev.map((r, i) => {
-      if (i !== rowIdx) return r;
-      return { ...r, jobEntries: [...r.jobEntries, { jobCode: "", hours: 0 }] };
-    }));
-  };
-
-  const removeJobEntry = (rowIdx, jobIdx) => {
-    setRows(prev => prev.map((r, i) => {
-      if (i !== rowIdx) return r;
-      const newEntries = r.jobEntries.filter((_, j) => j !== jobIdx);
-      const newTotal = newEntries.reduce((s, je) => s + Number(je.hours || 0), 0);
-      return { ...r, jobEntries: newEntries, totalHours: newTotal };
-    }));
-  };
+  const totalHours = rows.reduce((s, r) => s + Number(r.hours || 0), 0);
 
   const handleSubmit = () => {
     if (!employee || !periodStart) return alert("Please select employee and period start date.");
-    const emp = [...EMPLOYEES].find((e) => e.id === employee);
-    onSubmit({ employee: emp, periodStart, rows, totalHours, submittedAt: new Date().toISOString() });
+    const emp = [...EMPLOYEES].find(e => e.id === employee);
+    // Build summary rows grouped by day for backward compat with Review/History
+    const grouped = groupedDays().map(g => ({
+      day: g.day,
+      week: g.week,
+      isRDO: g.isRDO,
+      totalHours: rows.filter((r, i) => g.lines.includes(i)).reduce((s, r) => s + Number(r.hours || 0), 0),
+      jobEntries: rows.filter((r, i) => g.lines.includes(i)).map(r => ({ jobCode: r.jobCode, hours: r.hours })),
+      lines: rows.filter((r, i) => g.lines.includes(i)),
+      comment: rows.filter((r, i) => g.lines.includes(i)).map(r => r.comment).filter(Boolean).join("; "),
+      overtimeType: rows.find((r, i) => g.lines.includes(i) && r.overtimeType)?.overtimeType || "",
+      leaveType: rows.find((r, i) => g.lines.includes(i) && r.leaveType)?.leaveType || "",
+    }));
+    onSubmit({ employee: emp, periodStart, rows: grouped, totalHours, submittedAt: new Date().toISOString() });
     alert("Timesheet submitted successfully!");
   };
 
-  const resetRows = () => setRows(
-    FORTNIGHT_TEMPLATE.map((d) => ({
-      day: d.day,
-      week: d.week,
-      isRDO: d.isRDO || false,
-      totalHours: d.defaultHours,
-      jobEntries: [{ jobCode: "", hours: d.isRDO ? 0 : d.defaultHours }],
-      comment: "",
-      overtimeType: "",
-      leaveType: "",
-    }))
-  );
+  const cellPad = { padding: "6px 10px", verticalAlign: "middle" };
+  const inp = { border: "1px solid #e2e8f0", borderRadius: 6, fontSize: 12, fontFamily: "inherit", color: "#1e293b", background: "#fff" };
 
-  const cellStyle = { padding: "6px 10px", verticalAlign: "top" };
-  const inputBase = { border: "1px solid #e2e8f0", borderRadius: 6, fontSize: 12, fontFamily: "inherit", color: "#1e293b", background: "#fff" };
+  const groups = groupedDays();
 
   return (
     <div style={{ padding: "28px 24px" }}>
       <h2 style={{ fontSize: 20, fontWeight: 700, color: "#0f172a", marginBottom: 20 }}>Submit Fortnightly Timesheet</h2>
 
-      {/* Employee + Period header */}
+      {/* Employee + Period */}
       <div style={{ display: "flex", gap: 16, marginBottom: 24, flexWrap: "wrap" }}>
         <div>
           <label style={{ fontSize: 12, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 6 }}>Employee</label>
@@ -287,178 +304,146 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
             ? <div style={{ padding: "8px 14px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, background: "#f8fafc", color: "#1e293b", minWidth: 220, display: "inline-block" }}>
                 {EMPLOYEES.find(e => e.id === lockedEmployee)?.name}
               </div>
-            : <select value={employee} onChange={(e) => setEmployee(e.target.value)} style={{ padding: "8px 14px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "inherit", background: "#fff", color: "#1e293b", minWidth: 220 }}>
+            : <select value={employee} onChange={e => setEmployee(e.target.value)}
+                style={{ padding: "8px 14px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "inherit", background: "#fff", color: "#1e293b", minWidth: 220 }}>
                 <option value="">Select employee…</option>
-                {EMPLOYEES.map((emp) => (
-                  <option key={emp.id} value={emp.id}>{emp.name} ({emp.type})</option>
-                ))}
+                {EMPLOYEES.map(emp => <option key={emp.id} value={emp.id}>{emp.name} ({emp.type})</option>)}
               </select>
           }
         </div>
         <div>
           <label style={{ fontSize: 12, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 6 }}>Period Start (Thursday)</label>
-          <input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)}
+          <input type="date" value={periodStart} onChange={e => setPeriodStart(e.target.value)}
             style={{ padding: "8px 14px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "inherit", color: "#1e293b" }} />
         </div>
       </div>
 
       {/* Timesheet table */}
       <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr style={{ background: "#f8fafc" }}>
-              {["Wk", "Day", "Total Hrs", "Job Allocations", "Comments", "Overtime", "Leave / Other"].map((h) => (
-                <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontWeight: 600, color: "#475569", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
+              {["Wk", "Day", "Hours", "Job Code", "Comments", "Overtime", "Leave / Other", ""].map((h, i) => (
+                <th key={i} style={{ padding: "9px 10px", textAlign: "left", fontWeight: 600, color: "#475569", borderBottom: "2px solid #e2e8f0", whiteSpace: "nowrap", fontSize: 12 }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, i) => {
-              const jobHoursTotal = row.jobEntries.reduce((s, je) => s + Number(je.hours || 0), 0);
-              const allocated = !row.isRDO && jobHoursTotal > 0;
-              const mismatch = !row.isRDO && Math.abs(jobHoursTotal - Number(row.totalHours)) > 0.01;
+            {groups.map((group, gi) => {
+              const dayTotal = rows.filter((r, i) => group.lines.includes(i)).reduce((s, r) => s + Number(r.hours || 0), 0);
+              const rowCount = group.lines.length;
+              const bgDay = group.isRDO ? "#fafafa" : gi % 2 === 0 ? "#fff" : "#fafcff";
+              const borderTop = gi > 0 ? "2px solid #e2e8f0" : "none";
 
-              return (
-                <tr key={i} style={{ background: row.isRDO ? "#fafafa" : i % 2 === 0 ? "#fff" : "#fafcff", borderBottom: "1px solid #f1f5f9" }}>
-                  {/* Week */}
-                  <td style={{ ...cellStyle, color: "#94a3b8", fontSize: 12, paddingTop: 12 }}>Wk {row.week}</td>
+              return group.lines.map((rowIdx, li) => {
+                const r = rows[rowIdx];
+                const isFirst = li === 0;
+                const isLast = li === rowCount - 1;
 
-                  {/* Day */}
-                  <td style={{ ...cellStyle, color: row.isRDO ? "#94a3b8" : "#1e293b", fontStyle: row.isRDO ? "italic" : "normal", paddingTop: 12, whiteSpace: "nowrap" }}>
-                    {row.day}
-                  </td>
+                return (
+                  <tr key={rowIdx} style={{ background: bgDay, borderTop: isFirst ? borderTop : "none", borderBottom: isLast ? "none" : "1px solid #f1f5f9" }}>
 
-                  {/* Total hours for the day */}
-                  <td style={{ ...cellStyle, paddingTop: 10 }}>
-                    {row.isRDO
-                      ? <span style={{ color: "#94a3b8", fontSize: 12 }}>RDO</span>
-                      : <div>
-                          <input
-                            type="number" step="0.5" min="0" max="16"
-                            value={row.totalHours}
-                            onChange={(e) => updateRowField(i, "totalHours", e.target.value)}
-                            style={{ ...inputBase, width: 60, padding: "4px 8px", textAlign: "center" }}
-                          />
-                          {mismatch && (
-                            <div style={{ fontSize: 10, color: "#f59e0b", marginTop: 3, whiteSpace: "nowrap" }}>
-                              ⚠ {jobHoursTotal.toFixed(1)}h allocated
-                            </div>
-                          )}
-                        </div>
-                    }
-                  </td>
+                    {/* Wk — only on first line of day */}
+                    {isFirst && (
+                      <td rowSpan={rowCount} style={{ ...cellPad, color: "#94a3b8", fontSize: 11, borderRight: "1px solid #f1f5f9", verticalAlign: "top", paddingTop: 10, whiteSpace: "nowrap" }}>
+                        Wk {group.week}
+                      </td>
+                    )}
 
-                  {/* Job allocations */}
-                  <td style={{ ...cellStyle, minWidth: 340 }}>
-                    {row.isRDO
-                      ? <span style={{ color: "#94a3b8", fontSize: 12 }}>—</span>
-                      : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                          {row.jobEntries.map((je, j) => (
-                            <div key={j} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                              {/* Job selector */}
-                              <select
-                                value={je.jobCode}
-                                onChange={(e) => updateJobEntry(i, j, "jobCode", e.target.value)}
-                                style={{ ...inputBase, padding: "4px 6px", minWidth: 160 }}
-                              >
-                                <option value="">— select job —</option>
-                                {[...openJobs, ...importedJobs.filter(j => j.status === "open")].map((jb) => <option key={jb.id} value={jb.id}>{jb.id} {jb.description ? "– " + jb.description.slice(0,30) : ""}</option>)}
-                              </select>
+                    {/* Day label — only on first line, spans all lines of that day */}
+                    {isFirst && (
+                      <td rowSpan={rowCount} style={{ ...cellPad, fontWeight: 600, color: group.isRDO ? "#94a3b8" : "#1e293b", fontStyle: group.isRDO ? "italic" : "normal", borderRight: "1px solid #f1f5f9", verticalAlign: "top", paddingTop: 10, whiteSpace: "nowrap", minWidth: 90 }}>
+                        <div>{group.day}</div>
+                        {!group.isRDO && rowCount > 1 && (
+                          <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 3 }}>{dayTotal.toFixed(1)}h total</div>
+                        )}
+                        {group.isRDO && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>RDO</div>}
+                      </td>
+                    )}
 
-                              {/* Hours for this job */}
-                              <input
-                                type="number" step="0.5" min="0" max="16"
-                                value={je.hours}
-                                onChange={(e) => updateJobEntry(i, j, "hours", e.target.value)}
-                                title="Hours on this job"
-                                style={{ ...inputBase, width: 54, padding: "4px 6px", textAlign: "center" }}
-                              />
-                              <span style={{ fontSize: 11, color: "#94a3b8" }}>h</span>
+                    {/* Hours */}
+                    <td style={{ ...cellPad, minWidth: 72 }}>
+                      {group.isRDO
+                        ? (isFirst ? <span style={{ color: "#94a3b8", fontSize: 11 }}>—</span> : null)
+                        : <input type="number" step="0.5" min="0" max="16" value={r.hours}
+                            onChange={e => updateRow(rowIdx, "hours", e.target.value)}
+                            style={{ ...inp, width: 60, padding: "4px 8px", textAlign: "center" }} />
+                      }
+                    </td>
 
-                              {/* Remove job entry */}
-                              {row.jobEntries.length > 1 && (
-                                <button
-                                  onClick={() => removeJobEntry(i, j)}
-                                  title="Remove this job"
-                                  style={{ background: "none", border: "none", cursor: "pointer", color: "#e11d48", fontSize: 16, lineHeight: 1, padding: "2px 4px" }}
-                                >×</button>
-                              )}
-                            </div>
+                    {/* Job Code */}
+                    <td style={{ ...cellPad, minWidth: 180 }}>
+                      {!group.isRDO && (
+                        <select value={r.jobCode} onChange={e => updateRow(rowIdx, "jobCode", e.target.value)}
+                          style={{ ...inp, padding: "4px 8px", minWidth: 175 }}>
+                          <option value="">— select job —</option>
+                          {allOpenJobs.map(jb => (
+                            <option key={jb.id} value={jb.id}>
+                              {jb.id}{jb.description ? " – " + jb.description.slice(0, 28) : ""}
+                            </option>
                           ))}
+                        </select>
+                      )}
+                    </td>
 
-                          {/* Add another job */}
-                          <button
-                            onClick={() => addJobEntry(i)}
-                            style={{ alignSelf: "flex-start", background: "none", border: "1px dashed #cbd5e1", borderRadius: 6, color: "#64748b", fontSize: 11, cursor: "pointer", padding: "3px 10px", fontFamily: "inherit", marginTop: 2 }}
-                          >
-                            + add job
-                          </button>
+                    {/* Comment */}
+                    <td style={{ ...cellPad, minWidth: 140 }}>
+                      {!group.isRDO && (
+                        <input type="text" value={r.comment} onChange={e => updateRow(rowIdx, "comment", e.target.value)}
+                          placeholder="note…"
+                          style={{ ...inp, padding: "4px 8px", width: 140 }} />
+                      )}
+                    </td>
 
-                          {/* Allocation bar */}
-                          {Number(row.totalHours) > 0 && (
-                            <div style={{ marginTop: 4 }}>
-                              <div style={{ height: 4, background: "#f1f5f9", borderRadius: 4, overflow: "hidden", width: 240 }}>
-                                <div style={{
-                                  height: "100%",
-                                  width: `${Math.min(100, (jobHoursTotal / Number(row.totalHours)) * 100)}%`,
-                                  background: mismatch ? "#f59e0b" : jobHoursTotal === 0 ? "#e2e8f0" : "#22c55e",
-                                  borderRadius: 4, transition: "width 0.2s"
-                                }} />
-                              </div>
-                              <span style={{ fontSize: 10, color: mismatch ? "#f59e0b" : "#94a3b8" }}>
-                                {jobHoursTotal.toFixed(1)} / {Number(row.totalHours).toFixed(1)}h allocated
-                              </span>
-                            </div>
+                    {/* Overtime */}
+                    <td style={{ ...cellPad, minWidth: 130 }}>
+                      {!group.isRDO && (
+                        <select value={r.overtimeType} onChange={e => updateRow(rowIdx, "overtimeType", e.target.value)}
+                          style={{ ...inp, padding: "4px 8px", minWidth: 125 }}>
+                          <option value="">— none —</option>
+                          <option value="Ordinary">Ordinary</option>
+                          <option value="Overtime">Overtime</option>
+                          <option value="Overtime 1.5x">Overtime 1.5x</option>
+                          <option value="Overtime 2x">Overtime 2x</option>
+                        </select>
+                      )}
+                    </td>
+
+                    {/* Leave / Other */}
+                    <td style={{ ...cellPad, minWidth: 140 }}>
+                      {!group.isRDO && (
+                        <select value={r.leaveType} onChange={e => updateRow(rowIdx, "leaveType", e.target.value)}
+                          style={{ ...inp, padding: "4px 8px", minWidth: 135 }}>
+                          <option value="">— none —</option>
+                          {LEAVE_TYPES.map(lt => <option key={lt} value={lt}>{lt}</option>)}
+                        </select>
+                      )}
+                    </td>
+
+                    {/* Actions column */}
+                    <td style={{ ...cellPad, whiteSpace: "nowrap" }}>
+                      {!group.isRDO && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          {/* Remove line — only show if >1 line for this day */}
+                          {rowCount > 1 && (
+                            <button onClick={() => removeLine(rowIdx)} title="Remove this line"
+                              style={{ background: "none", border: "none", cursor: "pointer", color: "#e11d48", fontSize: 16, lineHeight: 1, padding: "2px 4px" }}>
+                              ×
+                            </button>
+                          )}
+                          {/* Add line — only show on last line of day */}
+                          {isLast && (
+                            <button onClick={() => addLine(group.day, group.week)} title="Add another line for this day"
+                              style={{ background: "none", border: "1px dashed #94a3b8", borderRadius: 5, color: "#64748b", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                              + line
+                            </button>
                           )}
                         </div>
-                    }
-                  </td>
-
-                  {/* Comments */}
-                  <td style={{ ...cellStyle, paddingTop: 10 }}>
-                    {!row.isRDO && (
-                      <input
-                        type="text"
-                        value={row.comment || ""}
-                        onChange={(e) => updateRowField(i, "comment", e.target.value)}
-                        placeholder="optional note…"
-                        style={{ ...inputBase, padding: "4px 8px", width: 150 }}
-                      />
-                    )}
-                  </td>
-
-                  {/* Overtime */}
-                  <td style={{ ...cellStyle, paddingTop: 10 }}>
-                    {!row.isRDO && (
-                      <select
-                        value={row.overtimeType || ""}
-                        onChange={(e) => updateRowField(i, "overtimeType", e.target.value)}
-                        style={{ ...inputBase, padding: "4px 8px", minWidth: 130 }}
-                      >
-                        <option value="">— none —</option>
-                        <option value="Ordinary">Ordinary</option>
-                        <option value="Overtime">Overtime</option>
-                        <option value="Overtime 1.5x">Overtime 1.5x</option>
-                        <option value="Overtime 2x">Overtime 2x</option>
-                      </select>
-                    )}
-                  </td>
-
-                  {/* Leave / Other */}
-                  <td style={{ ...cellStyle, paddingTop: 10 }}>
-                    {!row.isRDO && (
-                      <select
-                        value={row.leaveType}
-                        onChange={(e) => updateRowField(i, "leaveType", e.target.value)}
-                        style={{ ...inputBase, padding: "4px 8px", minWidth: 140 }}
-                      >
-                        <option value="">— none —</option>
-                        {LEAVE_TYPES.map((lt) => <option key={lt} value={lt}>{lt}</option>)}
-                      </select>
-                    )}
-                  </td>
-                </tr>
-              );
+                      )}
+                    </td>
+                  </tr>
+                );
+              });
             })}
           </tbody>
           <tfoot>
@@ -467,7 +452,7 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
               <td style={{ padding: "10px 12px", fontWeight: 700, color: totalHours === 76 ? "#16a34a" : "#dc2626", fontSize: 15 }}>
                 {Number(totalHours).toFixed(1)}h
               </td>
-              <td colSpan={4} style={{ padding: "10px 12px", fontSize: 12, color: "#94a3b8" }}>
+              <td colSpan={5} style={{ padding: "10px 12px", fontSize: 12, color: "#94a3b8" }}>
                 {totalHours === 76 ? "✓ Standard fortnight" : `Expected 76h – ${totalHours < 76 ? "short by" : "over by"} ${Math.abs(76 - totalHours).toFixed(1)}h`}
               </td>
             </tr>
@@ -479,7 +464,7 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
         <button onClick={handleSubmit} style={{ padding: "10px 28px", background: "#1e293b", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" }}>
           Submit Timesheet
         </button>
-        <button onClick={resetRows} style={{ padding: "10px 20px", background: "#fff", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 14, fontFamily: "inherit" }}>
+        <button onClick={() => setRows(makeDefaultRows())} style={{ padding: "10px 20px", background: "#fff", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 14, fontFamily: "inherit" }}>
           Reset
         </button>
       </div>
