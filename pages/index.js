@@ -59,21 +59,87 @@ const LEAVE_TYPES = [
   "Roster Day Off",
 ];
 
-// Pay cycle: Thursday to Wednesday, fortnightly
-// Week 1: Thu+Fri = 8.5h each, Mon–Thu = 8.5h each, 2nd Fri = 8h
-// Week 2: Mon off (RDO), Tue+Wed = 8.5h each
-const FORTNIGHT_TEMPLATE = [
-  { day: "Thu", week: 1, defaultHours: 8.5 },
-  { day: "Fri", week: 1, defaultHours: 8.5 },
-  { day: "Mon", week: 1, defaultHours: 8.5 },
-  { day: "Tue", week: 1, defaultHours: 8.5 },
-  { day: "Wed", week: 1, defaultHours: 8.5 },
-  { day: "Thu", week: 1, defaultHours: 8.5 },
-  { day: "Fri (wk2 short)", week: 1, defaultHours: 8.0 },
-  { day: "Mon (RDO)", week: 2, defaultHours: 0, isRDO: true },
-  { day: "Tue", week: 2, defaultHours: 8.5 },
-  { day: "Wed", week: 2, defaultHours: 8.5 },
+// Pay cycle: Thursday to Wednesday, fortnightly (9-day fortnight)
+// RDO falls on every alternate Monday — determined by the pay period start date
+// RDO_MONDAYS: all RDO Mondays in 2026 extracted from DRC RDO Calendar
+const RDO_MONDAYS_2026 = new Set([
+  "2026-01-12","2026-01-26","2026-02-09","2026-02-23",
+  "2026-03-09","2026-03-23","2026-04-06","2026-04-20",
+  "2026-05-04","2026-05-18","2026-06-01","2026-06-15",
+  "2026-06-29","2026-07-06","2026-07-20","2026-08-03",
+  "2026-08-17","2026-08-31","2026-09-14","2026-09-28",
+  "2026-10-12","2026-11-02","2026-11-16","2026-11-30",
+  "2026-12-07",
+]);
+
+// Public Holidays 2026 (QLD / national)
+const PUBLIC_HOLIDAYS_2026 = new Set([
+  "2026-01-01","2026-01-26","2026-03-09","2026-04-03",
+  "2026-04-06","2026-06-08","2026-12-25","2026-12-26",
+]);
+
+// Fortnight structure — days relative to period start (Thursday = day 0)
+// Offsets from period start Thursday:
+// Thu(0) Fri(1) Sat(2) Sun(3) Mon(4) Tue(5) Wed(6) Thu(7) Fri(8)
+// Sat(9) Sun(10) Mon(11) Tue(12) Wed(13)
+const FORTNIGHT_OFFSETS = [
+  { label: "Thu",              offset: 0,  week: 1, defaultHours: 8.5 },
+  { label: "Fri",              offset: 1,  week: 1, defaultHours: 8.5 },
+  { label: "Sat",              offset: 2,  week: 1, defaultHours: 0, isWeekend: true },
+  { label: "Sun",              offset: 3,  week: 1, defaultHours: 0, isWeekend: true },
+  { label: "Mon",              offset: 4,  week: 1, defaultHours: 8.5 },
+  { label: "Tue",              offset: 5,  week: 1, defaultHours: 8.5 },
+  { label: "Wed",              offset: 6,  week: 1, defaultHours: 8.5 },
+  { label: "Thu",              offset: 7,  week: 1, defaultHours: 8.5 },
+  { label: "Fri",              offset: 8,  week: 1, defaultHours: 8.0 },
+  { label: "Sat",              offset: 9,  week: 2, defaultHours: 0, isWeekend: true },
+  { label: "Sun",              offset: 10, week: 2, defaultHours: 0, isWeekend: true },
+  { label: "Mon",              offset: 11, week: 2, defaultHours: 0 }, // RDO Mon — dynamic
+  { label: "Tue",              offset: 12, week: 2, defaultHours: 8.5 },
+  { label: "Wed",              offset: 13, week: 2, defaultHours: 8.5 },
 ];
+
+// Helper: format date as YYYY-MM-DD
+function fmtDate(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+// Build a fortnight template from a given period start date (Thursday)
+function buildFortnightFromDate(periodStartStr) {
+  if (!periodStartStr) {
+    // Default static template (no date selected yet)
+    return FORTNIGHT_OFFSETS.map(d => ({
+      day: d.offset === 11 ? "Mon (RDO)" : d.label,
+      week: d.week,
+      isRDO: d.offset === 11,
+      isWeekend: d.isWeekend || false,
+      defaultHours: d.defaultHours,
+    }));
+  }
+  const start = new Date(periodStartStr + "T00:00:00");
+  return FORTNIGHT_OFFSETS.map(d => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + d.offset);
+    const dateStr = fmtDate(date);
+    const isRDO = d.offset === 11 && RDO_MONDAYS_2026.has(dateStr);
+    const isHoliday = PUBLIC_HOLIDAYS_2026.has(dateStr);
+    const dayNum = date.getDate();
+    const monthShort = date.toLocaleString("en-AU", { month: "short" });
+    const label = `${d.label} ${dayNum} ${monthShort}`;
+    return {
+      day: label,
+      week: d.week,
+      isRDO,
+      isHoliday,
+      isWeekend: d.isWeekend || false,
+      defaultHours: isRDO ? 0 : d.defaultHours,
+      date: dateStr,
+    };
+  });
+}
+
+// Keep a static version for initial state
+const FORTNIGHT_TEMPLATE = buildFortnightFromDate(null);
 
 const openJobs = JOBS.filter((j) => j.status === "open"); // base — extended dynamically in App
 
@@ -142,58 +208,419 @@ function StatCard({ label, value, sub, accent }) {
   );
 }
 
-function Dashboard({ entries }) {
+function Dashboard({ entries, extraEmployees = [], importedJobs = [] }) {
+  const [activeTab, setActiveTab] = useState("overview");
+  const [selectedEmployee, setSelectedEmployee] = useState("all");
+  const [selectedPeriod, setSelectedPeriod] = useState("all");
+
+  const allEmployees = [...EMPLOYEES, ...extraEmployees];
+  const allJobs = [...JOBS, ...importedJobs];
+  const allOpenJobs = allJobs.filter(j => j.status === "open");
+
+  const permanentEmps = allEmployees.filter(e => e.type === "permanent");
+  const labourHireEmps = allEmployees.filter(e => e.type === "labour-hire");
+
   const totalHours = entries.reduce((s, e) => s + Number(e.totalHours || 0), 0);
-  const openCount = openJobs.length;
-  const employeeCount = EMPLOYEES.length;
   const thisWeekEntries = entries.length;
+
+  // Get unique periods from entries
+  const periods = [...new Set(entries.map(e => e.periodStart).filter(Boolean))].sort().reverse();
+
+  // Filter entries by period
+  const periodFiltered = selectedPeriod === "all" ? entries : entries.filter(e => e.periodStart === selectedPeriod);
+
+  // Hours per employee (for "All Report")
+  const empHoursMap = {};
+  periodFiltered.forEach(e => {
+    const id = e.employee?.id;
+    if (!id) return;
+    if (!empHoursMap[id]) empHoursMap[id] = { emp: e.employee, hours: 0, entries: 0, jobs: new Set(), leaveTypes: [] };
+    empHoursMap[id].hours += Number(e.totalHours || 0);
+    empHoursMap[id].entries++;
+    e.rows?.forEach(r => {
+      const jobs = r.jobEntries || (r.jobCode ? [{ jobCode: r.jobCode }] : []);
+      jobs.forEach(j => j.jobCode && empHoursMap[id].jobs.add(j.jobCode));
+      if (r.leaveType) empHoursMap[id].leaveTypes.push(r.leaveType);
+    });
+  });
+
+  const empRows = Object.values(empHoursMap).sort((a, b) => b.hours - a.hours);
+  const labourHireRows = empRows.filter(r => r.emp?.type === "labour-hire");
+  const permanentRows = empRows.filter(r => r.emp?.type === "permanent");
+
+  // Individual employee detail
+  const empDetail = selectedEmployee !== "all"
+    ? periodFiltered.filter(e => e.employee?.id === selectedEmployee)
+    : [];
+
+  const tabStyle = (id) => ({
+    background: activeTab === id ? "#1e293b" : "#f1f5f9",
+    color: activeTab === id ? "#fff" : "#64748b",
+    border: "none", borderRadius: 8, padding: "7px 18px",
+    fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+  });
+
+  const card = (children, style = {}) => (
+    <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20, ...style }}>
+      {children}
+    </div>
+  );
+
+  const sectionTitle = (text) => (
+    <h3 style={{ fontSize: 14, fontWeight: 700, color: "#0f172a", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>{text}</h3>
+  );
 
   return (
     <div style={{ padding: "28px 24px" }}>
-      <h2 style={{ fontSize: 22, fontWeight: 700, color: "#0f172a", marginBottom: 6 }}>DRC Switchboards – Timesheet Portal</h2>
-      <p style={{ color: "#64748b", marginBottom: 28, fontSize: 14 }}>Fortnight cycle: Thursday → Wednesday &nbsp;|&nbsp; 9-day fortnight (RDO every 2nd Monday)</p>
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 32 }}>
-        <StatCard label="Total Hours Logged" value={totalHours.toFixed(1)} sub="this fortnight" accent="#2563eb" />
-        <StatCard label="Open Jobs" value={openCount} sub="available to book" accent="#16a34a" />
-        <StatCard label="Employees" value={employeeCount} sub="permanent + labour hire" />
-        <StatCard label="Timesheet Entries" value={thisWeekEntries} sub="submitted" />
+      {/* Header */}
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ fontSize: 22, fontWeight: 700, color: "#0f172a", margin: 0 }}>DRC Switchboards – Admin Dashboard</h2>
+        <p style={{ color: "#64748b", fontSize: 13, margin: "4px 0 0" }}>Fortnight cycle: Thursday → Wednesday &nbsp;|&nbsp; 9-day fortnight (RDO every 2nd Monday)</p>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-        <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 14, color: "#0f172a" }}>Open Jobs</h3>
-          {openJobs.map((j) => (
-            <div key={j.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #f1f5f9" }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "#1e293b" }}>{j.id}</div>
-                <div style={{ fontSize: 12, color: "#94a3b8" }}>{j.label.split("–")[1]?.trim()}</div>
+      {/* Top stat cards */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 28 }}>
+        <StatCard label="Total Hours Logged" value={totalHours.toFixed(1)} sub="all submissions" accent="#2563eb" />
+        <StatCard label="Open Jobs" value={allOpenJobs.length} sub="available to book" accent="#16a34a" />
+        <StatCard label="Permanent" value={permanentEmps.length} sub="employees" accent="#7c3aed" />
+        <StatCard label="Labour Hire" value={labourHireEmps.length} sub="employees" accent="#f59e0b" />
+        <StatCard label="Timesheet Submissions" value={thisWeekEntries} sub="total submitted" />
+      </div>
+
+      {/* Period filter */}
+      {periods.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: "#64748b" }}>Filter by period:</label>
+          <select value={selectedPeriod} onChange={e => setSelectedPeriod(e.target.value)}
+            style={{ padding: "6px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "inherit", color: "#1e293b", background: "#fff" }}>
+            <option value="all">All periods</option>
+            {periods.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+      )}
+
+      {/* Sub-tabs */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+        {[
+          { id: "overview", label: "📊 Overview" },
+          { id: "everyone", label: "👥 All Employees Report" },
+          { id: "labourhire", label: "🏗️ Labour Hire Report" },
+          { id: "individual", label: "🔍 Individual Report" },
+        ].map(t => (
+          <button key={t.id} onClick={() => setActiveTab(t.id)} style={tabStyle(t.id)}>{t.label}</button>
+        ))}
+      </div>
+
+      {/* ── OVERVIEW TAB ── */}
+      {activeTab === "overview" && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+          {card(<>
+            {sectionTitle("Open Jobs")}
+            {allOpenJobs.length === 0
+              ? <p style={{ color: "#94a3b8", fontSize: 13 }}>No open jobs.</p>
+              : allOpenJobs.map(j => (
+                <div key={j.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #f1f5f9" }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "#1e293b" }}>{j.id}</div>
+                    <div style={{ fontSize: 11, color: "#94a3b8" }}>{j.description || j.label?.split("–")[1]?.trim()}</div>
+                  </div>
+                  <JobBadge status={j.status} />
+                </div>
+              ))
+            }
+          </>)}
+
+          {card(<>
+            {sectionTitle("Pay Cycle Overview")}
+            {FORTNIGHT_TEMPLATE.filter(d => !d.isWeekend).map((d, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: "1px solid #f8fafc", opacity: d.isRDO ? 0.45 : 1 }}>
+                <span style={{ fontSize: 12, color: "#475569", width: 130 }}>Week {d.week} – {d.day}</span>
+                {d.isRDO
+                  ? <span style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>Roster Day Off</span>
+                  : <span style={{ fontSize: 12, fontWeight: 600, color: "#1e293b" }}>{d.defaultHours}h</span>
+                }
               </div>
-              <JobBadge status={j.status} />
+            ))}
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 13, color: "#64748b" }}>Total Fortnight</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "#2563eb" }}>76.0h</span>
             </div>
-          ))}
-        </div>
+          </>)}
 
-        <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 14, color: "#0f172a" }}>Pay Cycle Overview</h3>
-          {FORTNIGHT_TEMPLATE.map((d, i) => (
-            <div key={i} style={{
-              display: "flex", justifyContent: "space-between", alignItems: "center",
-              padding: "5px 0", borderBottom: "1px solid #f8fafc",
-              opacity: d.isRDO ? 0.45 : 1
-            }}>
-              <span style={{ fontSize: 12, color: "#475569", width: 130 }}>Week {d.week} – {d.day}</span>
-              {d.isRDO
-                ? <span style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>Roster Day Off</span>
-                : <span style={{ fontSize: 12, fontWeight: 600, color: "#1e293b" }}>{d.defaultHours}h</span>
-              }
+          {card(<>
+            {sectionTitle("Workforce Summary")}
+            <div style={{ display: "flex", gap: 16, marginBottom: 16 }}>
+              <div style={{ flex: 1, background: "#f0fdf4", borderRadius: 10, padding: "14px 16px", textAlign: "center" }}>
+                <div style={{ fontSize: 28, fontWeight: 700, color: "#16a34a" }}>{permanentEmps.length}</div>
+                <div style={{ fontSize: 12, color: "#15803d", fontWeight: 600 }}>Permanent</div>
+              </div>
+              <div style={{ flex: 1, background: "#fffbeb", borderRadius: 10, padding: "14px 16px", textAlign: "center" }}>
+                <div style={{ fontSize: 28, fontWeight: 700, color: "#d97706" }}>{labourHireEmps.length}</div>
+                <div style={{ fontSize: 12, color: "#b45309", fontWeight: 600 }}>Labour Hire</div>
+              </div>
             </div>
-          ))}
-          <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 13, color: "#64748b" }}>Total Fortnight</span>
-            <span style={{ fontSize: 14, fontWeight: 700, color: "#2563eb" }}>76.0h</span>
-          </div>
+            {labourHireEmps.slice(0, 6).map(e => (
+              <div key={e.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #f1f5f9" }}>
+                <div style={{ fontSize: 13, color: "#1e293b" }}>{e.name}</div>
+                <Badge type="labour-hire" />
+              </div>
+            ))}
+            {labourHireEmps.length > 6 && <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 8 }}>+{labourHireEmps.length - 6} more labour hire</div>}
+          </>, { gridColumn: "1 / -1" })}
         </div>
-      </div>
+      )}
+
+      {/* ── ALL EMPLOYEES REPORT ── */}
+      {activeTab === "everyone" && (
+        <div>
+          {empRows.length === 0
+            ? card(<p style={{ color: "#94a3b8", textAlign: "center", padding: "40px 0" }}>No timesheet submissions yet.</p>)
+            : <>
+              {/* Summary table */}
+              {card(<>
+                {sectionTitle(`All Employees — ${selectedPeriod === "all" ? "All Periods" : `Period: ${selectedPeriod}`} (${empRows.length} employees)`)}
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: "#f8fafc" }}>
+                        {["Employee", "Type", "Contract", "Submissions", "Total Hours", "Jobs Worked", "Leave Types"].map(h => (
+                          <th key={h} style={{ padding: "9px 12px", textAlign: "left", fontWeight: 600, color: "#475569", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {empRows.map((row, i) => (
+                        <tr key={row.emp?.id} style={{ background: i % 2 === 0 ? "#fff" : "#fafcff", borderBottom: "1px solid #f1f5f9" }}>
+                          <td style={{ padding: "9px 12px", fontWeight: 600, color: "#1e293b" }}>{row.emp?.name}</td>
+                          <td style={{ padding: "9px 12px" }}><Badge type={row.emp?.type} /></td>
+                          <td style={{ padding: "9px 12px" }}><Badge type={row.emp?.contract} /></td>
+                          <td style={{ padding: "9px 12px", color: "#64748b" }}>{row.entries}</td>
+                          <td style={{ padding: "9px 12px", fontWeight: 700, color: "#2563eb" }}>{row.hours.toFixed(1)}h</td>
+                          <td style={{ padding: "9px 12px" }}>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                              {[...row.jobs].slice(0, 3).map(j => (
+                                <span key={j} style={{ background: "#dbeafe", color: "#1d4ed8", borderRadius: 5, padding: "1px 7px", fontSize: 11, fontWeight: 600 }}>{j}</span>
+                              ))}
+                              {row.jobs.size > 3 && <span style={{ fontSize: 11, color: "#94a3b8" }}>+{row.jobs.size - 3}</span>}
+                            </div>
+                          </td>
+                          <td style={{ padding: "9px 12px", fontSize: 11, color: "#64748b" }}>
+                            {[...new Set(row.leaveTypes)].join(", ") || "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                        <td colSpan={4} style={{ padding: "9px 12px", fontWeight: 700, color: "#1e293b" }}>TOTAL</td>
+                        <td style={{ padding: "9px 12px", fontWeight: 700, color: "#2563eb", fontSize: 14 }}>
+                          {empRows.reduce((s, r) => s + r.hours, 0).toFixed(1)}h
+                        </td>
+                        <td colSpan={2} />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </>)}
+            </>
+          }
+        </div>
+      )}
+
+      {/* ── LABOUR HIRE REPORT ── */}
+      {activeTab === "labourhire" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Summary cards */}
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <StatCard label="Labour Hire Total" value={labourHireEmps.length} sub="employees on file" accent="#f59e0b" />
+            <StatCard label="Hours Logged" value={labourHireRows.reduce((s,r)=>s+r.hours,0).toFixed(1)} sub="labour hire hours" accent="#f59e0b" />
+            <StatCard label="Submissions" value={labourHireRows.reduce((s,r)=>s+r.entries,0)} sub="total entries" />
+          </div>
+
+          {labourHireRows.length === 0
+            ? card(<p style={{ color: "#94a3b8", textAlign: "center", padding: "40px 0" }}>No labour hire timesheet submissions yet.</p>)
+            : card(<>
+                {sectionTitle(`Labour Hire Report — ${selectedPeriod === "all" ? "All Periods" : selectedPeriod}`)}
+                <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: "#92400e" }}>
+                  ⚠️ Labour hire timesheets are required for invoice reconciliation with agencies.
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: "#fffbeb" }}>
+                        {["Employee", "Contract", "Periods Submitted", "Total Hours", "Jobs", "Leave Used"].map(h => (
+                          <th key={h} style={{ padding: "9px 12px", textAlign: "left", fontWeight: 600, color: "#92400e", borderBottom: "1px solid #fde68a", whiteSpace: "nowrap" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {labourHireRows.map((row, i) => (
+                        <tr key={row.emp?.id} style={{ background: i % 2 === 0 ? "#fff" : "#fffdf5", borderBottom: "1px solid #f1f5f9" }}>
+                          <td style={{ padding: "9px 12px" }}>
+                            <div style={{ fontWeight: 700, color: "#1e293b" }}>{row.emp?.name}</div>
+                            {row.emp?.email && <div style={{ fontSize: 11, color: "#94a3b8" }}>{row.emp.email}</div>}
+                          </td>
+                          <td style={{ padding: "9px 12px" }}><Badge type={row.emp?.contract} /></td>
+                          <td style={{ padding: "9px 12px", color: "#64748b" }}>{row.entries}</td>
+                          <td style={{ padding: "9px 12px", fontWeight: 700, color: "#d97706", fontSize: 15 }}>{row.hours.toFixed(1)}h</td>
+                          <td style={{ padding: "9px 12px" }}>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                              {[...row.jobs].map(j => (
+                                <span key={j} style={{ background: "#fef9c3", color: "#92400e", borderRadius: 5, padding: "1px 7px", fontSize: 11, fontWeight: 600 }}>{j}</span>
+                              ))}
+                              {row.jobs.size === 0 && <span style={{ color: "#94a3b8", fontSize: 11 }}>—</span>}
+                            </div>
+                          </td>
+                          <td style={{ padding: "9px 12px", fontSize: 11, color: "#64748b" }}>
+                            {[...new Set(row.leaveTypes)].join(", ") || "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ borderTop: "2px solid #fde68a", background: "#fffbeb" }}>
+                        <td colSpan={3} style={{ padding: "9px 12px", fontWeight: 700, color: "#92400e" }}>TOTAL LABOUR HIRE</td>
+                        <td style={{ padding: "9px 12px", fontWeight: 700, color: "#d97706", fontSize: 14 }}>
+                          {labourHireRows.reduce((s, r) => s + r.hours, 0).toFixed(1)}h
+                        </td>
+                        <td colSpan={2} />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+
+                {/* Labour hire employees not yet submitted */}
+                {(() => {
+                  const submitted = new Set(labourHireRows.map(r => r.emp?.id));
+                  const notSubmitted = labourHireEmps.filter(e => !submitted.has(e.id));
+                  if (!notSubmitted.length) return null;
+                  return (
+                    <div style={{ marginTop: 20, padding: "14px 16px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10 }}>
+                      <div style={{ fontWeight: 700, color: "#dc2626", fontSize: 13, marginBottom: 8 }}>⚠ Not yet submitted ({notSubmitted.length})</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {notSubmitted.map(e => (
+                          <span key={e.id} style={{ background: "#fff", border: "1px solid #fecaca", color: "#dc2626", borderRadius: 7, padding: "4px 12px", fontSize: 12, fontWeight: 600 }}>
+                            {e.name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </>)
+          }
+        </div>
+      )}
+
+      {/* ── INDIVIDUAL REPORT ── */}
+      {activeTab === "individual" && (
+        <div>
+          <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 6 }}>Select Employee</label>
+              <select value={selectedEmployee} onChange={e => setSelectedEmployee(e.target.value)}
+                style={{ padding: "8px 14px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "inherit", color: "#1e293b", background: "#fff", minWidth: 220 }}>
+                <option value="all">— choose employee —</option>
+                {allEmployees.map(e => <option key={e.id} value={e.id}>{e.name} ({e.type === "labour-hire" ? "Labour Hire" : "Permanent"})</option>)}
+              </select>
+            </div>
+          </div>
+
+          {selectedEmployee === "all"
+            ? card(<p style={{ color: "#94a3b8", textAlign: "center", padding: "40px 0" }}>Select an employee above to view their individual report.</p>)
+            : (() => {
+                const emp = allEmployees.find(e => e.id === selectedEmployee);
+                const empEntries = periodFiltered.filter(e => e.employee?.id === selectedEmployee);
+                const totalH = empEntries.reduce((s, e) => s + Number(e.totalHours || 0), 0);
+                const allJobsWorked = new Set();
+                const leaveUsed = [];
+                empEntries.forEach(e => {
+                  e.rows?.forEach(r => {
+                    const jobs = r.jobEntries || (r.jobCode ? [{ jobCode: r.jobCode }] : []);
+                    jobs.forEach(j => j.jobCode && allJobsWorked.add(j.jobCode));
+                    if (r.leaveType) leaveUsed.push(r.leaveType);
+                  });
+                });
+                return (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                    {/* Employee header */}
+                    {card(<>
+                      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
+                        <div style={{ width: 52, height: 52, borderRadius: "50%", background: emp?.type === "labour-hire" ? "#fef9c3" : "#dbeafe", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 18, color: emp?.type === "labour-hire" ? "#92400e" : "#1d4ed8" }}>
+                          {emp?.name?.slice(0, 2).toUpperCase()}
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 18, fontWeight: 700, color: "#0f172a" }}>{emp?.name}</div>
+                          <div style={{ display: "flex", gap: 6, marginTop: 4 }}><Badge type={emp?.type} /><Badge type={emp?.contract} /></div>
+                          {emp?.email && <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>{emp.email}</div>}
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                        <StatCard label="Total Hours" value={totalH.toFixed(1)} sub="logged" accent="#2563eb" />
+                        <StatCard label="Submissions" value={empEntries.length} sub="periods" />
+                        <StatCard label="Jobs Worked" value={allJobsWorked.size} sub="unique jobs" accent="#16a34a" />
+                      </div>
+                    </>)}
+
+                    {empEntries.length === 0
+                      ? card(<p style={{ color: "#94a3b8", textAlign: "center", padding: "20px 0" }}>No submissions found for this employee.</p>)
+                      : empEntries.map((entry, ei) => card(<>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                            <div>
+                              <div style={{ fontWeight: 700, color: "#0f172a", fontSize: 14 }}>Period: {entry.periodStart}</div>
+                              <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                                {Number(entry.totalHours).toFixed(1)}h total · Submitted {new Date(entry.submittedAt).toLocaleDateString("en-AU")}
+                              </div>
+                            </div>
+                          </div>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                            <thead>
+                              <tr style={{ background: "#f8fafc" }}>
+                                {["Day", "Hours", "Jobs", "Comments", "Rite", "Leave"].map(h => (
+                                  <th key={h} style={{ padding: "7px 10px", textAlign: "left", fontWeight: 600, color: "#475569", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {entry.rows?.filter(r => !r.isRDO || r.leaveType).map((r, ri) => {
+                                const jobs = r.jobEntries || (r.jobCode ? [{ jobCode: r.jobCode, hours: r.hours }] : []);
+                                return (
+                                  <tr key={ri} style={{ borderBottom: "1px solid #f8fafc", background: ri % 2 === 0 ? "#fff" : "#fafcff", verticalAlign: "top" }}>
+                                    <td style={{ padding: "7px 10px", color: "#475569", whiteSpace: "nowrap" }}>{r.day}</td>
+                                    <td style={{ padding: "7px 10px", fontWeight: 600, color: "#1e293b" }}>{r.isRDO ? "RDO" : `${r.totalHours || r.hours || 0}h`}</td>
+                                    <td style={{ padding: "7px 10px" }}>
+                                      {jobs.filter(j => j.jobCode).length > 0
+                                        ? <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                                            {jobs.filter(j => j.jobCode).map((j, k) => (
+                                              <div key={k} style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                                                <span style={{ background: "#dbeafe", color: "#1d4ed8", borderRadius: 4, padding: "1px 7px", fontSize: 11, fontWeight: 600 }}>{j.jobCode}</span>
+                                                <span style={{ fontSize: 11, color: "#64748b" }}>{j.hours}h</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        : <span style={{ color: "#cbd5e1" }}>—</span>
+                                      }
+                                    </td>
+                                    <td style={{ padding: "7px 10px", color: "#64748b", fontStyle: "italic", fontSize: 11 }}>{r.comment || "—"}</td>
+                                    <td style={{ padding: "7px 10px" }}>
+                                      {r.overtimeType ? <span style={{ background: "#fef3c7", color: "#b45309", borderRadius: 4, padding: "1px 7px", fontSize: 11, fontWeight: 600 }}>{r.overtimeType}</span> : <span style={{ color: "#cbd5e1" }}>—</span>}
+                                    </td>
+                                    <td style={{ padding: "7px 10px" }}>
+                                      {r.leaveType ? <span style={{ background: "#fef9c3", color: "#92400e", borderRadius: 4, padding: "1px 7px", fontSize: 11, fontWeight: 600 }}>{r.leaveType}</span> : <span style={{ color: "#cbd5e1" }}>—</span>}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </>, { key: ei }))
+                    }
+                  </div>
+                );
+              })()
+          }
+        </div>
+      )}
     </div>
   );
 }
@@ -203,29 +630,34 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
   const [periodStart, setPeriodStart] = useState("");
 
   // Data model: one row per JOB LINE (not per day)
-  // Each row: { day, week, isRDO, defaultHours, jobCode, hours, comment, overtimeType, leaveType, isAddLine }
+  // Each row: { day, week, isRDO, isHoliday, isWeekend, defaultHours, date, jobCode, hours, comment, overtimeType, leaveType }
   // Days are grouped visually; the first row for a day shows the day label with rowSpan
 
-  const makeDefaultRows = () =>
-    FORTNIGHT_TEMPLATE.map((d) => ({
+  const makeDefaultRows = (dateStr) => {
+    const template = buildFortnightFromDate(dateStr || null);
+    return template.map((d) => ({
       day: d.day,
       week: d.week,
       isRDO: d.isRDO || false,
+      isHoliday: d.isHoliday || false,
+      isWeekend: d.isWeekend || false,
       defaultHours: d.defaultHours,
+      date: d.date || null,
       jobCode: "",
-      hours: d.isRDO ? 0 : d.defaultHours,
+      hours: (d.isRDO || d.isWeekend) ? 0 : d.defaultHours,
       comment: "",
       overtimeType: "",
-      leaveType: "",
+      leaveType: d.isHoliday ? "Public Holiday" : "",
     }));
+  };
 
-  const [rows, setRows] = useState(makeDefaultRows);
+  const [rows, setRows] = useState(() => makeDefaultRows(""));
 
   // All open jobs (built-in + imported)
   const allOpenJobs = [...openJobs, ...importedJobs.filter(j => j.status === "open")];
 
   // Group rows by day key for rendering
-  // Returns array of { day, week, isRDO, defaultHours, lines: [rowIdx, ...] }
+  // Returns array of { day, week, isRDO, isWeekend, defaultHours, lines: [rowIdx, ...] }
   const groupedDays = () => {
     const groups = [];
     const seen = {};
@@ -233,7 +665,7 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
       const key = r.day + "_" + r.week;
       if (seen[key] === undefined) {
         seen[key] = groups.length;
-        groups.push({ day: r.day, week: r.week, isRDO: r.isRDO, defaultHours: r.defaultHours, lines: [i] });
+        groups.push({ day: r.day, week: r.week, isRDO: r.isRDO, isHoliday: r.isHoliday, isWeekend: r.isWeekend, defaultHours: r.defaultHours, lines: [i] });
       } else {
         groups[seen[key]].lines.push(i);
       }
@@ -250,7 +682,7 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
       const dayRows = prev.map((r, i) => ({ r, i })).filter(({ r }) => r.day === dayKey && r.week === week);
       const insertAfter = dayRows[dayRows.length - 1].i;
       const template = prev[dayRows[0].i]; // inherit day/week/isRDO from first row of day
-      const newLine = { day: dayKey, week, isRDO: template.isRDO, defaultHours: template.defaultHours, jobCode: "", hours: 0, comment: "", overtimeType: "", leaveType: "" };
+      const newLine = { day: dayKey, week, isRDO: template.isRDO, isHoliday: false, isWeekend: template.isWeekend, defaultHours: template.defaultHours, date: null, jobCode: "", hours: 0, comment: "", overtimeType: "", leaveType: "" };
       const next = [...prev];
       next.splice(insertAfter + 1, 0, newLine);
       return next;
@@ -276,6 +708,8 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
       day: g.day,
       week: g.week,
       isRDO: g.isRDO,
+      isHoliday: g.isHoliday || false,
+      isWeekend: g.isWeekend,
       totalHours: rows.filter((r, i) => g.lines.includes(i)).reduce((s, r) => s + Number(r.hours || 0), 0),
       jobEntries: rows.filter((r, i) => g.lines.includes(i)).map(r => ({ jobCode: r.jobCode, hours: r.hours })),
       lines: rows.filter((r, i) => g.lines.includes(i)),
@@ -291,6 +725,16 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
   const inp = { border: "1px solid #e2e8f0", borderRadius: 6, fontSize: 12, fontFamily: "inherit", color: "#1e293b", background: "#fff" };
 
   const groups = groupedDays();
+
+  // ── Incomplete day detection ──────────────────────────────────────────────
+  // A day is "incomplete" if it's a regular work day, has no leave type,
+  // and total logged hours < defaultHours
+  const incompleteDays = groups.filter(g => {
+    if (g.isRDO || g.isWeekend) return false;
+    const dayHours = rows.filter((r, i) => g.lines.includes(i)).reduce((s, r) => s + Number(r.hours || 0), 0);
+    const hasLeave = rows.filter((r, i) => g.lines.includes(i)).some(r => r.leaveType);
+    return !hasLeave && dayHours < g.defaultHours;
+  });
 
   return (
     <div style={{ padding: "28px 24px" }}>
@@ -313,7 +757,7 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
         </div>
         <div>
           <label style={{ fontSize: 12, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 6 }}>Period Start (Thursday)</label>
-          <input type="date" value={periodStart} onChange={e => setPeriodStart(e.target.value)}
+          <input type="date" value={periodStart} onChange={e => { const d = e.target.value; setPeriodStart(d); setRows(makeDefaultRows(d)); }}
             style={{ padding: "8px 14px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "inherit", color: "#1e293b" }} />
         </div>
       </div>
@@ -323,7 +767,7 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr style={{ background: "#f8fafc" }}>
-              {["Wk", "Day", "Hours", "Job Code", "Comments", "Overtime", "Leave / Other", ""].map((h, i) => (
+              {["Wk", "Day", "Hours", "Job Code", "Comments", "Rite", "Leave / Other", ""].map((h, i) => (
                 <th key={i} style={{ padding: "9px 10px", textAlign: "left", fontWeight: 600, color: "#475569", borderBottom: "2px solid #e2e8f0", whiteSpace: "nowrap", fontSize: 12 }}>{h}</th>
               ))}
             </tr>
@@ -332,7 +776,9 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
             {groups.map((group, gi) => {
               const dayTotal = rows.filter((r, i) => group.lines.includes(i)).reduce((s, r) => s + Number(r.hours || 0), 0);
               const rowCount = group.lines.length;
-              const bgDay = group.isRDO ? "#fafafa" : gi % 2 === 0 ? "#fff" : "#fafcff";
+              const hasLeave = rows.filter((r, i) => group.lines.includes(i)).some(r => r.leaveType);
+              const isIncomplete = !group.isRDO && !group.isWeekend && !hasLeave && dayTotal < group.defaultHours;
+              const bgDay = group.isRDO ? "#fafafa" : group.isHoliday ? "#fff5f5" : group.isWeekend ? "#f8f4ff" : isIncomplete ? "#fffbeb" : gi % 2 === 0 ? "#fff" : "#fafcff";
               const borderTop = gi > 0 ? "2px solid #e2e8f0" : "none";
 
               return group.lines.map((rowIdx, li) => {
@@ -352,12 +798,22 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
 
                     {/* Day label — only on first line, spans all lines of that day */}
                     {isFirst && (
-                      <td rowSpan={rowCount} style={{ ...cellPad, fontWeight: 600, color: group.isRDO ? "#94a3b8" : "#1e293b", fontStyle: group.isRDO ? "italic" : "normal", borderRight: "1px solid #f1f5f9", verticalAlign: "top", paddingTop: 10, whiteSpace: "nowrap", minWidth: 90 }}>
-                        <div>{group.day}</div>
-                        {!group.isRDO && rowCount > 1 && (
-                          <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 3 }}>{dayTotal.toFixed(1)}h total</div>
+                      <td rowSpan={rowCount} style={{ ...cellPad, fontWeight: 600, color: group.isRDO ? "#94a3b8" : group.isWeekend ? "#7c3aed" : isIncomplete ? "#b45309" : "#1e293b", fontStyle: group.isRDO ? "italic" : "normal", borderRight: "1px solid #f1f5f9", verticalAlign: "top", paddingTop: 10, whiteSpace: "nowrap", minWidth: 90 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                          {isIncomplete && <span title="Hours incomplete" style={{ fontSize: 13 }}>⚠️</span>}
+                          <span>{group.day}</span>
+                        </div>
+                        {!group.isRDO && !group.isWeekend && rowCount > 1 && (
+                          <div style={{ fontSize: 10, color: isIncomplete ? "#f59e0b" : "#94a3b8", marginTop: 3 }}>{dayTotal.toFixed(1)}h / {group.defaultHours}h</div>
+                        )}
+                        {isIncomplete && !hasLeave && (
+                          <div style={{ fontSize: 10, color: "#f59e0b", marginTop: 2, fontWeight: 600 }}>
+                            {(group.defaultHours - dayTotal).toFixed(1)}h missing
+                          </div>
                         )}
                         {group.isRDO && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>RDO</div>}
+                        {group.isHoliday && <div style={{ fontSize: 10, background: "#fee2e2", color: "#dc2626", borderRadius: 4, padding: "1px 5px", marginTop: 3, display: "inline-block", fontWeight: 600 }}>Public Holiday</div>}
+                        {group.isWeekend && <div style={{ fontSize: 10, color: "#a78bfa", marginTop: 2 }}>Weekend</div>}
                       </td>
                     )}
 
@@ -367,7 +823,9 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
                         ? (isFirst ? <span style={{ color: "#94a3b8", fontSize: 11 }}>—</span> : null)
                         : <input type="number" step="0.5" min="0" max="16" value={r.hours}
                             onChange={e => updateRow(rowIdx, "hours", e.target.value)}
-                            style={{ ...inp, width: 60, padding: "4px 8px", textAlign: "center" }} />
+                            style={{ ...inp, width: 60, padding: "4px 8px", textAlign: "center",
+                              border: isIncomplete && !hasLeave ? "1.5px solid #f59e0b" : "1px solid #e2e8f0",
+                              background: group.isWeekend && Number(r.hours) === 0 ? "#f8f4ff" : "#fff" }} />
                       }
                     </td>
 
@@ -395,7 +853,7 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
                       )}
                     </td>
 
-                    {/* Overtime */}
+                    {/* Rite (Overtime) */}
                     <td style={{ ...cellPad, minWidth: 130 }}>
                       {!group.isRDO && (
                         <select value={r.overtimeType} onChange={e => updateRow(rowIdx, "overtimeType", e.target.value)}
@@ -424,14 +882,12 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
                     <td style={{ ...cellPad, whiteSpace: "nowrap" }}>
                       {!group.isRDO && (
                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          {/* Remove line — only show if >1 line for this day */}
                           {rowCount > 1 && (
                             <button onClick={() => removeLine(rowIdx)} title="Remove this line"
                               style={{ background: "none", border: "none", cursor: "pointer", color: "#e11d48", fontSize: 16, lineHeight: 1, padding: "2px 4px" }}>
                               ×
                             </button>
                           )}
-                          {/* Add line — only show on last line of day */}
                           {isLast && (
                             <button onClick={() => addLine(group.day, group.week)} title="Add another line for this day"
                               style={{ background: "none", border: "1px dashed #94a3b8", borderRadius: 5, color: "#64748b", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit", whiteSpace: "nowrap" }}>
@@ -460,13 +916,53 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
         </table>
       </div>
 
-      <div style={{ marginTop: 24, display: "flex", gap: 12 }}>
-        <button onClick={handleSubmit} style={{ padding: "10px 28px", background: "#1e293b", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" }}>
-          Submit Timesheet
-        </button>
-        <button onClick={() => setRows(makeDefaultRows())} style={{ padding: "10px 20px", background: "#fff", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 14, fontFamily: "inherit" }}>
-          Reset
-        </button>
+      <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 12 }}>
+
+        {/* Incomplete days warning banner */}
+        {incompleteDays.length > 0 && (
+          <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "14px 18px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <span style={{ fontSize: 18 }}>⚠️</span>
+              <span style={{ fontWeight: 700, color: "#92400e", fontSize: 14 }}>
+                {incompleteDays.length} day{incompleteDays.length > 1 ? "s" : ""} with incomplete hours
+              </span>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {incompleteDays.map((g, i) => {
+                const dayHours = rows.filter((r, ri) => g.lines.includes(ri)).reduce((s, r) => s + Number(r.hours || 0), 0);
+                const missing = (g.defaultHours - dayHours).toFixed(1);
+                return (
+                  <div key={i} style={{ background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 7, padding: "5px 12px", fontSize: 12, color: "#92400e" }}>
+                    <strong>{g.day}</strong> — {dayHours.toFixed(1)}h of {g.defaultHours}h &nbsp;
+                    <span style={{ fontWeight: 700, color: "#b45309" }}>({missing}h missing)</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 12, color: "#92400e", marginTop: 10 }}>
+              Please complete all hours or add a Leave / Other type before submitting.
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 12 }}>
+          <button onClick={handleSubmit}
+            disabled={incompleteDays.length > 0}
+            title={incompleteDays.length > 0 ? "Complete all day hours before submitting" : ""}
+            style={{
+              padding: "10px 28px",
+              background: incompleteDays.length > 0 ? "#94a3b8" : "#1e293b",
+              color: "#fff", border: "none", borderRadius: 8,
+              cursor: incompleteDays.length > 0 ? "not-allowed" : "pointer",
+              fontSize: 14, fontWeight: 600, fontFamily: "inherit",
+              opacity: incompleteDays.length > 0 ? 0.7 : 1,
+            }}>
+            Submit Timesheet
+          </button>
+          <button onClick={() => setRows(makeDefaultRows(periodStart))} style={{ padding: "10px 20px", background: "#fff", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 14, fontFamily: "inherit" }}>
+            Reset
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -478,7 +974,7 @@ function ReviewPage({ entries }) {
 
   const exportCSV = () => {
     if (!filtered.length) return alert("No entries to export.");
-    const headers = ["Employee", "Type", "Period Start", "Day", "Week", "Hours", "Job Allocations", "Comments", "Overtime", "Leave Type", "Submitted At"];
+    const headers = ["Employee", "Type", "Period Start", "Day", "Week", "Hours", "Job Allocations", "Comments", "Rite", "Leave Type", "Submitted At"];
     const lines = [headers.join(",")];
     filtered.forEach((e) => {
       e.rows.forEach((r) => {
@@ -530,7 +1026,7 @@ function ReviewPage({ entries }) {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr style={{ background: "#f8fafc" }}>
-                  {["Day", "Total Hrs", "Job Allocations", "Comments", "Overtime", "Leave / Other"].map((h) => (
+                  {["Day", "Total Hrs", "Job Allocations", "Comments", "Rite", "Leave / Other"].map((h) => (
                     <th key={h} style={{ padding: "7px 16px", textAlign: "left", color: "#64748b", fontWeight: 600, borderBottom: "1px solid #f1f5f9" }}>{h}</th>
                   ))}
                 </tr>
@@ -1399,7 +1895,7 @@ function EmployeePortal({ user, entries, onSubmit, importedJobs = [] }) {
                   </div>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                     <thead><tr style={{ background: "#f8fafc" }}>
-                      {["Day", "Total Hrs", "Job Allocations", "Comments", "Overtime", "Leave"].map(h => <th key={h} style={{ padding: "7px 16px", textAlign: "left", color: "#64748b", fontWeight: 600, borderBottom: "1px solid #f1f5f9" }}>{h}</th>)}
+                      {["Day", "Total Hrs", "Job Allocations", "Comments", "Rite", "Leave"].map(h => <th key={h} style={{ padding: "7px 16px", textAlign: "left", color: "#64748b", fontWeight: 600, borderBottom: "1px solid #f1f5f9" }}>{h}</th>)}
                     </tr></thead>
                     <tbody>
                       {entry.rows.filter(r => !r.isRDO).map((r, j) => {
@@ -1611,7 +2107,7 @@ export default function App() {
         <>
           <AdminNav current={tab} onChange={setTab} />
           <main>
-            {tab === "dashboard" && <Dashboard entries={entries} />}
+            {tab === "dashboard" && <Dashboard entries={entries} extraEmployees={extraEmployees} importedJobs={importedJobs} />}
             {tab === "review" && <ReviewPage entries={entries} />}
             {tab === "jobs" && <JobRegister importedJobs={importedJobs} setImportedJobs={setImportedJobs} />}
             {tab === "employees" && <EmployeesPage extraEmployees={extraEmployees} setExtraEmployees={updateExtraEmployees} passwords={passwords} setPasswords={setPasswords} />}
