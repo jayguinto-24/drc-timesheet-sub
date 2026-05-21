@@ -576,7 +576,7 @@ function Dashboard({ entries, extraEmployees = [], importedJobs = [] }) {
                           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                             <thead>
                               <tr style={{ background: "#f8fafc" }}>
-                                {["Day", "Hours", "Jobs", "Comments", "Rite", "Leave"].map(h => (
+                                {["Day", "Hours", "Jobs", "Comments", "Rate", "Leave"].map(h => (
                                   <th key={h} style={{ padding: "7px 10px", textAlign: "left", fontWeight: 600, color: "#475569", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
                                 ))}
                               </tr>
@@ -767,7 +767,7 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr style={{ background: "#f8fafc" }}>
-              {["Wk", "Day", "Hours", "Job Code", "Comments", "Rite", "Leave / Other", ""].map((h, i) => (
+              {["Wk", "Day", "Hours", "Job Code", "Comments", "Rate", "Leave / Other", ""].map((h, i) => (
                 <th key={i} style={{ padding: "9px 10px", textAlign: "left", fontWeight: 600, color: "#475569", borderBottom: "2px solid #e2e8f0", whiteSpace: "nowrap", fontSize: 12 }}>{h}</th>
               ))}
             </tr>
@@ -853,7 +853,7 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
                       )}
                     </td>
 
-                    {/* Rite (Overtime) */}
+                    {/* Rate (Overtime) */}
                     <td style={{ ...cellPad, minWidth: 130 }}>
                       {!group.isRDO && (
                         <select value={r.overtimeType} onChange={e => updateRow(rowIdx, "overtimeType", e.target.value)}
@@ -974,7 +974,7 @@ function ReviewPage({ entries }) {
 
   const exportCSV = () => {
     if (!filtered.length) return alert("No entries to export.");
-    const headers = ["Employee", "Type", "Period Start", "Day", "Week", "Hours", "Job Allocations", "Comments", "Rite", "Leave Type", "Submitted At"];
+    const headers = ["Employee", "Type", "Period Start", "Day", "Week", "Hours", "Job Allocations", "Comments", "Rate", "Leave Type", "Submitted At"];
     const lines = [headers.join(",")];
     filtered.forEach((e) => {
       e.rows.forEach((r) => {
@@ -1026,7 +1026,7 @@ function ReviewPage({ entries }) {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr style={{ background: "#f8fafc" }}>
-                  {["Day", "Total Hrs", "Job Allocations", "Comments", "Rite", "Leave / Other"].map((h) => (
+                  {["Day", "Total Hrs", "Job Allocations", "Comments", "Rate", "Leave / Other"].map((h) => (
                     <th key={h} style={{ padding: "7px 16px", textAlign: "left", color: "#64748b", fontWeight: 600, borderBottom: "1px solid #f1f5f9" }}>{h}</th>
                   ))}
                 </tr>
@@ -1895,7 +1895,7 @@ function EmployeePortal({ user, entries, onSubmit, importedJobs = [] }) {
                   </div>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                     <thead><tr style={{ background: "#f8fafc" }}>
-                      {["Day", "Total Hrs", "Job Allocations", "Comments", "Rite", "Leave"].map(h => <th key={h} style={{ padding: "7px 16px", textAlign: "left", color: "#64748b", fontWeight: 600, borderBottom: "1px solid #f1f5f9" }}>{h}</th>)}
+                      {["Day", "Total Hrs", "Job Allocations", "Comments", "Rate", "Leave"].map(h => <th key={h} style={{ padding: "7px 16px", textAlign: "left", color: "#64748b", fontWeight: 600, borderBottom: "1px solid #f1f5f9" }}>{h}</th>)}
                     </tr></thead>
                     <tbody>
                       {entry.rows.filter(r => !r.isRDO).map((r, j) => {
