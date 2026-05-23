@@ -1169,7 +1169,6 @@ function JobRegister({ importedJobs, setImportedJobs }) {
     setImportedJobs(prev => {
       const kept = prev.filter(p => !parseResult.jobs.find(nj => nj.id === p.id));
       const next = [...kept, ...parseResult.jobs];
-      try { localStorage.setItem("drc_imported_jobs", JSON.stringify(next)); } catch {}
       return next;
     });
     setShowImport(false); setParseResult(null);
@@ -1177,7 +1176,6 @@ function JobRegister({ importedJobs, setImportedJobs }) {
 
   const clearImported = () => {
     setImportedJobs([]);
-    try { localStorage.removeItem("drc_imported_jobs"); } catch {}
     setConfirmClear(false);
   };
 
@@ -1449,7 +1447,6 @@ function EmployeesPage({ extraEmployees, setExtraEmployees, passwords, setPasswo
       // Set default password
       setPasswords(prev => {
         const updated = { ...prev, [newId]: "drc2026" };
-        try { localStorage.setItem("drc_passwords", JSON.stringify(updated)); } catch {}
         return updated;
       });
     }
@@ -1463,7 +1460,6 @@ function EmployeesPage({ extraEmployees, setExtraEmployees, passwords, setPasswo
     setPasswords(prev => {
       const updated = { ...prev };
       delete updated[emp.id];
-      try { localStorage.setItem("drc_passwords", JSON.stringify(updated)); } catch {}
       return updated;
     });
     setConfirmDelete(null);
@@ -2027,43 +2023,58 @@ export default function App() {
   const [entries, setEntries] = useState([]);
   const [changingPassword, setChangingPassword] = useState(false);
 
-  const [importedJobs, setImportedJobs] = useState(() => {
-    try {
-      const stored = localStorage.getItem("drc_imported_jobs");
-      return stored ? JSON.parse(stored) : [];
-    } catch { return []; }
-  });
+  const [importedJobs, setImportedJobs] = useState([]);
+  const [extraEmployees, setExtraEmployees] = useState([]);
+  const [passwords, setPasswords] = useState({});
 
-  const [extraEmployees, setExtraEmployees] = useState(() => {
-    try {
-      const stored = localStorage.getItem("drc_extra_employees");
-      return stored ? JSON.parse(stored) : [];
-    } catch { return []; }
-  });
+  // Load all shared data from the server on mount
+  useEffect(() => {
+    fetch("/api/store")
+      .then(r => r.json())
+      .then(data => {
+        if (data.extraEmployees) setExtraEmployees(data.extraEmployees);
+        if (data.passwords) setPasswords(data.passwords);
+        if (data.importedJobs) setImportedJobs(data.importedJobs);
+      })
+      .catch(() => {});
+  }, []);
 
-  // Persist extraEmployees to localStorage whenever they change
+  const saveToServer = (patch) => {
+    fetch("/api/store", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }).catch(() => {});
+  };
+
   const updateExtraEmployees = (updater) => {
     setExtraEmployees(prev => {
       const next = typeof updater === "function" ? updater(prev) : updater;
-      try { localStorage.setItem("drc_extra_employees", JSON.stringify(next)); } catch {}
+      saveToServer({ extraEmployees: next });
       return next;
     });
   };
 
-  // Per-employee passwords stored in localStorage
-  const [passwords, setPasswords] = useState(() => {
-    try {
-      const stored = localStorage.getItem("drc_passwords");
-      return stored ? JSON.parse(stored) : {};
-    } catch { return {}; }
-  });
+  const updatePasswords = (updater) => {
+    setPasswords(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      saveToServer({ passwords: next });
+      return next;
+    });
+  };
+
+  const updateImportedJobs = (updater) => {
+    setImportedJobs(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      saveToServer({ importedJobs: next });
+      return next;
+    });
+  };
 
   const getPassword = (id) => passwords[id] || DEFAULT_PASSWORD;
 
   const savePassword = (id, newPw) => {
-    const updated = { ...passwords, [id]: newPw };
-    setPasswords(updated);
-    try { localStorage.setItem("drc_passwords", JSON.stringify(updated)); } catch {}
+    updatePasswords(prev => ({ ...prev, [id]: newPw }));
   };
 
   const handleLogin = (u) => {
@@ -2109,8 +2120,8 @@ export default function App() {
           <main>
             {tab === "dashboard" && <Dashboard entries={entries} extraEmployees={extraEmployees} importedJobs={importedJobs} />}
             {tab === "review" && <ReviewPage entries={entries} />}
-            {tab === "jobs" && <JobRegister importedJobs={importedJobs} setImportedJobs={setImportedJobs} />}
-            {tab === "employees" && <EmployeesPage extraEmployees={extraEmployees} setExtraEmployees={updateExtraEmployees} passwords={passwords} setPasswords={setPasswords} />}
+            {tab === "jobs" && <JobRegister importedJobs={importedJobs} setImportedJobs={updateImportedJobs} />}
+            {tab === "employees" && <EmployeesPage extraEmployees={extraEmployees} setExtraEmployees={updateExtraEmployees} passwords={passwords} setPasswords={updatePasswords} />}
           </main>
         </>
       ) : (
