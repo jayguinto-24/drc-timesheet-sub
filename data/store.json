@@ -1,0 +1,15 @@
+{
+  "extraEmployees": [
+    {
+      "id": "X1779514912087",
+      "name": "Cristian Gomez",
+      "email": "cristian@drcswitchboards.com.au",
+      "type": "labour-hire",
+      "contract": "full-time"
+    }
+  ],
+  "passwords": {
+    "X1779514912087": "drc2026"
+  },
+  "importedJobs": []
+}

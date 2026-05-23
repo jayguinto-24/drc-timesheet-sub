@@ -1,31 +1,23 @@
-import fs from "fs";
-import path from "path";
+import { Redis } from "@upstash/redis";
 
-const STORE_PATH = path.join(process.cwd(), "data", "store.json");
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+});
 
-function readStore() {
-  try {
-    if (!fs.existsSync(STORE_PATH)) return { extraEmployees: [], passwords: {}, importedJobs: [] };
-    return JSON.parse(fs.readFileSync(STORE_PATH, "utf8"));
-  } catch {
-    return { extraEmployees: [], passwords: {}, importedJobs: [] };
-  }
-}
+const KEY = "drc_store";
 
-function writeStore(data) {
-  const dir = path.dirname(STORE_PATH);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(STORE_PATH, JSON.stringify(data, null, 2));
-}
+const DEFAULT_STORE = { extraEmployees: [], passwords: {}, importedJobs: [] };
 
-export default function handler(req, res) {
+export default async function handler(req, res) {
   if (req.method === "GET") {
-    return res.status(200).json(readStore());
+    const data = await redis.get(KEY);
+    return res.status(200).json(data || DEFAULT_STORE);
   }
   if (req.method === "POST") {
-    const current = readStore();
+    const current = (await redis.get(KEY)) || DEFAULT_STORE;
     const updated = { ...current, ...req.body };
-    writeStore(updated);
+    await redis.set(KEY, updated);
     return res.status(200).json(updated);
   }
   res.status(405).end();
