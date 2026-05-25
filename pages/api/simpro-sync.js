@@ -9,8 +9,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    const jobs = await fetchAllJobs(baseUrl, token);
-    return res.status(200).json({ jobs });
+    const { jobs, sample } = await fetchAllJobs(baseUrl, token);
+    return res.status(200).json({ jobs, debug_sample: sample });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -42,8 +42,9 @@ async function fetchAllJobs(baseUrl, token) {
     page++;
   }
 
-  return all.map((job) => {
-    // Prefer OrderNo (customer reference) as the job number, fall back to Simpro ID
+  const sample = all.slice(0, 3).map(j => ({ ID: j.ID, Name: j.Name, OrderNo: j.OrderNo, Status: j.Status, _raw_keys: Object.keys(j) }));
+
+  const jobs = all.map((job) => {
     const jobNo = job.OrderNo && job.OrderNo !== "0" ? job.OrderNo : String(job.ID);
     const name = job.Name || "";
     const closed = ["Complete", "Cancel"].includes(job.Status);
@@ -60,4 +61,6 @@ async function fetchAllJobs(baseUrl, token) {
       source: "simpro",
     };
   });
+
+  return { jobs, sample };
 }
