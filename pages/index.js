@@ -1019,8 +1019,8 @@ function buildWeekFromMonday(mondayStr) {
   });
 }
 
-function LabourHireTimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
-  const emp = [...EMPLOYEES].find(e => e.id === lockedEmployee);
+function LabourHireTimesheetForm({ onSubmit, lockedEmployee, employeeData, importedJobs = [] }) {
+  const emp = employeeData || [...EMPLOYEES].find(e => e.id === lockedEmployee);
   const [weekStart, setWeekStart] = useState("");
   const allOpenJobs = [...openJobs, ...importedJobs.filter(j => j.status === "open")];
 
@@ -1249,7 +1249,7 @@ function ReviewPage({ entries }) {
                   const jobs = r.jobEntries || (r.jobCode ? [{ jobCode: r.jobCode, hours: r.hours }] : []);
                   return (
                     <tr key={j} style={{ borderBottom: "1px solid #f8fafc", verticalAlign: "top" }}>
-                      <td style={{ padding: "8px 16px", color: "#475569" }}>{r.day} (Wk {r.week})</td>
+                      <td style={{ padding: "8px 16px", color: "#475569" }}>{r.day}{r.week ? ` (Wk ${r.week})` : ""}</td>
                       <td style={{ padding: "8px 16px", fontWeight: 600, color: "#1e293b" }}>{r.isRDO ? "RDO" : `${r.totalHours || r.hours || 0}h`}</td>
                       <td style={{ padding: "8px 16px" }}>
                         {r.isRDO ? <span style={{ color: "#cbd5e1" }}>—</span>
@@ -2122,7 +2122,7 @@ function EmployeePortal({ user, entries, onSubmit, importedJobs = [] }) {
       </nav>
       {view === "submit"
         ? (user.employeeData?.type === "labour-hire"
-            ? <LabourHireTimesheetForm onSubmit={onSubmit} lockedEmployee={user.id} importedJobs={importedJobs} />
+            ? <LabourHireTimesheetForm onSubmit={onSubmit} lockedEmployee={user.id} employeeData={user.employeeData} importedJobs={importedJobs} />
             : <TimesheetForm onSubmit={onSubmit} lockedEmployee={user.id} importedJobs={importedJobs} />
           )
         : (
