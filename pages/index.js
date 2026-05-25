@@ -160,12 +160,17 @@ function Badge({ type }) {
 }
 
 function JobBadge({ status, simproStatus, simproColor }) {
-  if (simproStatus) {
-    const color = simproColor || "#64748b";
+  // Handle legacy format where simproStatus was stored as a full Simpro object
+  const rawName = typeof simproStatus === "object" ? (simproStatus?.Name || "") : (simproStatus || "");
+  const rawColor = typeof simproStatus === "object" ? (simproStatus?.Color || simproColor || "") : (simproColor || "");
+  const displayName = rawName.includes(" : ") ? rawName.split(" : ").slice(1).join(" : ") : rawName;
+
+  if (displayName) {
+    const color = rawColor || "#64748b";
     return (
       <span style={{ display:"inline-flex", alignItems:"center", gap:5, background: color + "22", color, borderRadius:6, padding:"2px 10px", fontSize:11, fontWeight:600, maxWidth:180, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
         <span style={{ width:7, height:7, borderRadius:"50%", background:color, flexShrink:0, display:"inline-block" }} />
-        {simproStatus}
+        {displayName}
       </span>
     );
   }
