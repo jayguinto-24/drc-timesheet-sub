@@ -7,7 +7,7 @@ const redis = new Redis({
 
 const KEY = "drc_store";
 
-const DEFAULT_STORE = { extraEmployees: [], passwords: {}, importedJobs: [] };
+const DEFAULT_STORE = { extraEmployees: [], passwords: {}, importedJobs: [], entries: [] };
 
 export default async function handler(req, res) {
   if (req.method === "GET") {

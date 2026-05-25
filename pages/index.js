@@ -2080,6 +2080,7 @@ export default function App() {
         if (data.extraEmployees) setExtraEmployees(data.extraEmployees);
         if (data.passwords) setPasswords(data.passwords);
         if (data.importedJobs) setImportedJobs(data.importedJobs);
+        if (data.entries) setEntries(data.entries);
       })
       .catch(() => {});
   }, []);
@@ -2138,7 +2139,11 @@ export default function App() {
   };
 
   const handleSubmit = (entry) => {
-    setEntries((prev) => [...prev, entry]);
+    setEntries((prev) => {
+      const next = [...prev, entry];
+      saveToServer({ entries: next });
+      return next;
+    });
   };
 
   if (!user) return <LoginScreen onLogin={handleLogin} passwords={passwords} extraEmployees={extraEmployees} />;
