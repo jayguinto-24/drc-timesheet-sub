@@ -9,8 +9,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { jobs, sample } = await fetchAllJobs(baseUrl, token);
-    return res.status(200).json({ jobs, debug_sample: sample });
+    const { jobs } = await fetchAllJobs(baseUrl, token);
+    return res.status(200).json({ jobs });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -42,19 +42,28 @@ async function fetchAllJobs(baseUrl, token) {
     page++;
   }
 
-  const sample = all.slice(0, 3).map(j => ({ ID: j.ID, Name: j.Name, OrderNo: j.OrderNo, Status: j.Status, _raw_keys: Object.keys(j) }));
-
   const jobs = all.map((job) => {
     const jobNo = job.OrderNo && job.OrderNo !== "0" ? job.OrderNo : String(job.ID);
     const name = job.Name || "";
-    const closed = ["Complete", "Cancel"].includes(job.Status);
+
+    // Status is an object: { ID, Name, Color }
+    const statusObj = job.Status || {};
+    const statusName = statusObj.Name || "";
+    const statusColor = statusObj.Color || "";
+
+    // Strip the "Category : " prefix Simpro adds (e.g. "Job : New Job" → "New Job")
+    const displayStatus = statusName.includes(" : ") ? statusName.split(" : ").slice(1).join(" : ") : statusName;
+
+    // Mark as closed if the status name contains close/complete/cancel keywords
+    const closed = /complet|cancel|closed|finish|paid/i.test(statusName);
 
     return {
       id: jobNo,
       label: name ? `${jobNo} – ${name}` : jobNo,
       description: name,
       status: closed ? "closed" : "open",
-      simproStatus: job.Status || "",
+      simproStatus: displayStatus,
+      simproColor: statusColor,
       manager: "",
       budget: "",
       headerJob: "",
@@ -62,5 +71,5 @@ async function fetchAllJobs(baseUrl, token) {
     };
   });
 
-  return { jobs, sample };
+  return { jobs };
 }
