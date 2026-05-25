@@ -1085,6 +1085,27 @@ function JobRegister({ importedJobs, setImportedJobs }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [confirmClear, setConfirmClear] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState("");
+
+  const handleSimproSync = async () => {
+    setSyncing(true);
+    setSyncMsg("");
+    try {
+      const res = await fetch("/api/simpro-sync", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Sync failed");
+      setImportedJobs(prev => {
+        const kept = prev.filter(p => p.source !== "simpro");
+        return [...kept, ...data.jobs];
+      });
+      setSyncMsg(`Synced ${data.jobs.length} jobs from Simpro.`);
+    } catch (err) {
+      setSyncMsg(`Error: ${err.message}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const allJobs = [...JOBS, ...importedJobs];
   const filtered = allJobs.filter(j => {
@@ -1348,8 +1369,16 @@ function JobRegister({ importedJobs, setImportedJobs }) {
           <button onClick={() => setShowImport(true)} style={{ padding:"8px 20px", background:"#2563eb", color:"#fff", border:"none", borderRadius:8, fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
             ↑ Import from MYOB
           </button>
+          <button onClick={handleSimproSync} disabled={syncing} style={{ padding:"8px 20px", background: syncing ? "#6b7280" : "#16a34a", color:"#fff", border:"none", borderRadius:8, fontSize:13, fontWeight:600, cursor: syncing ? "not-allowed" : "pointer", fontFamily:"inherit" }}>
+            {syncing ? "Syncing…" : "⟳ Sync from Simpro"}
+          </button>
         </div>
       </div>
+      {syncMsg && (
+        <div style={{ marginBottom:12, padding:"8px 14px", borderRadius:8, fontSize:13, background: syncMsg.startsWith("Error") ? "#fef2f2" : "#f0fdf4", color: syncMsg.startsWith("Error") ? "#dc2626" : "#166534", border: `1px solid ${syncMsg.startsWith("Error") ? "#fecaca" : "#bbf7d0"}` }}>
+          {syncMsg}
+        </div>
+      )}
 
       {/* Job table */}
       <div style={{ border:"1px solid #e2e8f0", borderRadius:12, overflow:"hidden" }}>
