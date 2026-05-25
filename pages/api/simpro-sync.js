@@ -26,7 +26,7 @@ async function fetchAllJobs(baseUrl, token) {
   let all = [];
 
   while (true) {
-    const url = `${baseUrl}/api/v1.0/companies/0/jobs/?columns=ID,Name,OrderNo,Status,SiteAddress&pageSize=250&page=${page}`;
+    const url = `${baseUrl}/api/v1.0/companies/0/jobs/?columns=ID,Name,OrderNo,Status&pageSize=250&page=${page}`;
     const resp = await fetch(url, { headers });
 
     if (!resp.ok) {
@@ -53,7 +53,7 @@ async function fetchAllJobs(baseUrl, token) {
       label: name ? `${jobNo} – ${name}` : jobNo,
       description: name,
       status: closed ? "closed" : "open",
-      manager: job.SiteAddress?.ContactName || "",
+      manager: "",
       budget: "",
       headerJob: "",
       source: "simpro",
