@@ -159,7 +159,24 @@ function Badge({ type }) {
   );
 }
 
-function JobBadge({ status }) {
+const SIMPRO_STATUS_STYLES = {
+  Pending:  { bg: "#fef9c3", color: "#854d0e", dot: "#eab308" },
+  Progress: { bg: "#dbeafe", color: "#1e40af", dot: "#3b82f6" },
+  Complete: { bg: "#dcfce7", color: "#166534", dot: "#22c55e" },
+  Cancel:   { bg: "#fee2e2", color: "#991b1b", dot: "#ef4444" },
+  Hold:     { bg: "#ffedd5", color: "#9a3412", dot: "#f97316" },
+};
+
+function JobBadge({ status, simproStatus }) {
+  if (simproStatus && SIMPRO_STATUS_STYLES[simproStatus]) {
+    const s = SIMPRO_STATUS_STYLES[simproStatus];
+    return (
+      <span style={{ display:"inline-flex", alignItems:"center", gap:5, background:s.bg, color:s.color, borderRadius:6, padding:"2px 10px", fontSize:11, fontWeight:600 }}>
+        <span style={{ width:7, height:7, borderRadius:"50%", background:s.dot, display:"inline-block" }} />
+        {simproStatus}
+      </span>
+    );
+  }
   return (
     <span style={{
       display: "inline-flex", alignItems: "center", gap: 5,
@@ -324,7 +341,7 @@ function Dashboard({ entries, extraEmployees = [], importedJobs = [] }) {
                     <div style={{ fontSize: 13, fontWeight: 600, color: "#1e293b" }}>{j.id}</div>
                     <div style={{ fontSize: 11, color: "#94a3b8" }}>{j.description || j.label?.split("–")[1]?.trim()}</div>
                   </div>
-                  <JobBadge status={j.status} />
+                  <JobBadge status={j.status} simproStatus={j.simproStatus} />
                 </div>
               ))
             }
@@ -1401,10 +1418,12 @@ function JobRegister({ importedJobs, setImportedJobs }) {
                   <td style={{ padding:"10px 14px", color:"#64748b", fontSize:12, fontFamily:"monospace" }}>
                     {j.budget ? `$${Number(j.budget.replace(/[^0-9.]/g,"")).toLocaleString()}` : "—"}
                   </td>
-                  <td style={{ padding:"10px 14px" }}><JobBadge status={j.status} /></td>
+                  <td style={{ padding:"10px 14px" }}><JobBadge status={j.status} simproStatus={j.simproStatus} /></td>
                   <td style={{ padding:"10px 14px" }}>
                     {j.source === "myob"
                       ? <span style={{ background:"#eff6ff", color:"#2563eb", borderRadius:5, padding:"2px 9px", fontSize:11, fontWeight:700 }}>MYOB</span>
+                      : j.source === "simpro"
+                      ? <span style={{ background:"#f0fdf4", color:"#166534", borderRadius:5, padding:"2px 9px", fontSize:11, fontWeight:700 }}>Simpro</span>
                       : <span style={{ background:"#f1f5f9", color:"#64748b", borderRadius:5, padding:"2px 9px", fontSize:11, fontWeight:600 }}>Built-in</span>
                     }
                   </td>

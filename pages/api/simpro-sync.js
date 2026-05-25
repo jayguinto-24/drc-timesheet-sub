@@ -53,6 +53,7 @@ async function fetchAllJobs(baseUrl, token) {
       label: name ? `${jobNo} – ${name}` : jobNo,
       description: name,
       status: closed ? "closed" : "open",
+      simproStatus: job.Status || "",
       manager: "",
       budget: "",
       headerJob: "",
