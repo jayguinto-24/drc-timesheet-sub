@@ -772,7 +772,7 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
         <div>
           <label style={{ fontSize: 12, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 6 }}>Period Start (Thursday)</label>
           <input type="date" value={periodStart} onChange={e => { const d = e.target.value; setPeriodStart(d); setRows(makeDefaultRows(d)); }}
-            style={{ padding: "8px 14px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "inherit", color: "#1e293b" }} />
+            style={{ padding: "8px 14px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "inherit", color: "#1e293b", background: "#fff" }} />
         </div>
       </div>
 
@@ -825,7 +825,7 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
                             {(group.defaultHours - dayTotal).toFixed(1)}h missing
                           </div>
                         )}
-                        {group.isRDO && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>RDO</div>}
+                        {group.isRDO && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>RDO{rowCount > 1 ? ` · ${dayTotal.toFixed(1)}h worked` : ""}</div>}
                         {group.isHoliday && <div style={{ fontSize: 10, background: "#fee2e2", color: "#dc2626", borderRadius: 4, padding: "1px 5px", marginTop: 3, display: "inline-block", fontWeight: 600 }}>Public Holiday</div>}
                         {group.isWeekend && <div style={{ fontSize: 10, color: "#a78bfa", marginTop: 2 }}>Weekend</div>}
                       </td>
@@ -833,8 +833,8 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
 
                     {/* Hours */}
                     <td style={{ ...cellPad, minWidth: 72 }}>
-                      {group.isRDO
-                        ? (isFirst ? <span style={{ color: "#94a3b8", fontSize: 11 }}>—</span> : null)
+                      {group.isRDO && isFirst
+                        ? <span style={{ color: "#94a3b8", fontSize: 11 }}>—</span>
                         : <input type="number" step="0.5" min="0" max="16" value={r.hours}
                             onChange={e => updateRow(rowIdx, "hours", e.target.value)}
                             style={{ ...inp, width: 60, padding: "4px 8px", textAlign: "center",
@@ -845,7 +845,7 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
 
                     {/* Job Code */}
                     <td style={{ ...cellPad, minWidth: 180 }}>
-                      {!group.isRDO && (
+                      {(!group.isRDO || !isFirst) && (
                         <select value={r.jobCode} onChange={e => updateRow(rowIdx, "jobCode", e.target.value)}
                           style={{ ...inp, padding: "4px 8px", minWidth: 175 }}>
                           <option value="">— select job —</option>
@@ -860,7 +860,7 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
 
                     {/* Comment */}
                     <td style={{ ...cellPad, minWidth: 140 }}>
-                      {!group.isRDO && (
+                      {(!group.isRDO || !isFirst) && (
                         <input type="text" value={r.comment} onChange={e => updateRow(rowIdx, "comment", e.target.value)}
                           placeholder="note…"
                           style={{ ...inp, padding: "4px 8px", width: 140 }} />
@@ -869,7 +869,7 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
 
                     {/* Rate (Overtime) */}
                     <td style={{ ...cellPad, minWidth: 130 }}>
-                      {!group.isRDO && (
+                      {(!group.isRDO || !isFirst) && (
                         <select value={r.overtimeType} onChange={e => updateRow(rowIdx, "overtimeType", e.target.value)}
                           style={{ ...inp, padding: "4px 8px", minWidth: 125 }}>
                           <option value="">— none —</option>
@@ -883,7 +883,7 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
 
                     {/* Leave / Other */}
                     <td style={{ ...cellPad, minWidth: 140 }}>
-                      {!group.isRDO && (
+                      {(!group.isRDO || !isFirst) && (
                         <select value={r.leaveType} onChange={e => updateRow(rowIdx, "leaveType", e.target.value)}
                           style={{ ...inp, padding: "4px 8px", minWidth: 135 }}>
                           <option value="">— none —</option>
@@ -894,7 +894,28 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
 
                     {/* Actions column */}
                     <td style={{ ...cellPad, whiteSpace: "nowrap" }}>
-                      {!group.isRDO && (
+                      {group.isRDO ? (
+                        // RDO day: first slot shows "+ line" to add work; added lines show × and further + line
+                        isFirst && rowCount === 1 ? (
+                          <button onClick={() => addLine(group.day, group.week)} title="Log hours worked on RDO"
+                            style={{ background: "none", border: "1px dashed #94a3b8", borderRadius: 5, color: "#64748b", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                            + line
+                          </button>
+                        ) : !isFirst ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                            <button onClick={() => removeLine(rowIdx)} title="Remove this line"
+                              style={{ background: "none", border: "none", cursor: "pointer", color: "#e11d48", fontSize: 16, lineHeight: 1, padding: "2px 4px" }}>
+                              ×
+                            </button>
+                            {isLast && (
+                              <button onClick={() => addLine(group.day, group.week)} title="Add another line"
+                                style={{ background: "none", border: "1px dashed #94a3b8", borderRadius: 5, color: "#64748b", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                                + line
+                              </button>
+                            )}
+                          </div>
+                        ) : null
+                      ) : (
                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                           {rowCount > 1 && (
                             <button onClick={() => removeLine(rowIdx)} title="Remove this line"
@@ -977,6 +998,184 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
             Reset
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Labour Hire Timesheet (Mon–Sun, weekly, flexible hours) ─────────────────
+const LH_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function buildWeekFromMonday(mondayStr) {
+  if (!mondayStr) return LH_DAYS.map(d => ({ label: d, date: null, isWeekend: d === "Sat" || d === "Sun" }));
+  const start = new Date(mondayStr + "T00:00:00");
+  return LH_DAYS.map((d, i) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + i);
+    const dateStr = fmtDate(date);
+    const dayNum = date.getDate();
+    const monthShort = date.toLocaleString("en-AU", { month: "short" });
+    return { label: `${d} ${dayNum} ${monthShort}`, date: dateStr, isWeekend: i >= 5 };
+  });
+}
+
+function LabourHireTimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
+  const emp = [...EMPLOYEES].find(e => e.id === lockedEmployee);
+  const [weekStart, setWeekStart] = useState("");
+  const allOpenJobs = [...openJobs, ...importedJobs.filter(j => j.status === "open")];
+
+  const makeRows = (mondayStr) =>
+    buildWeekFromMonday(mondayStr || null).map(d => ({
+      label: d.label, date: d.date, isWeekend: d.isWeekend,
+      lines: [{ jobCode: "", hours: 0, comment: "" }],
+    }));
+
+  const [days, setDays] = useState(() => makeRows(""));
+
+  const totalHours = days.reduce((s, d) => s + d.lines.reduce((ls, l) => ls + Number(l.hours || 0), 0), 0);
+  const TARGET = 38;
+
+  const updateLine = (di, li, field, val) =>
+    setDays(prev => prev.map((d, i) => i !== di ? d : {
+      ...d, lines: d.lines.map((l, j) => j !== li ? l : { ...l, [field]: val }),
+    }));
+
+  const addLine = (di) =>
+    setDays(prev => prev.map((d, i) => i !== di ? d : {
+      ...d, lines: [...d.lines, { jobCode: "", hours: 0, comment: "" }],
+    }));
+
+  const removeLine = (di, li) =>
+    setDays(prev => prev.map((d, i) => i !== di ? d : {
+      ...d, lines: d.lines.length <= 1 ? d.lines : d.lines.filter((_, j) => j !== li),
+    }));
+
+  const handleSubmit = () => {
+    if (!weekStart) return alert("Please select the week start (Monday).");
+    const rows = days.map(d => ({
+      day: d.label,
+      date: d.date,
+      isWeekend: d.isWeekend,
+      isRDO: false,
+      isHoliday: false,
+      totalHours: d.lines.reduce((s, l) => s + Number(l.hours || 0), 0),
+      jobEntries: d.lines.map(l => ({ jobCode: l.jobCode, hours: l.hours })),
+      lines: d.lines,
+      comment: d.lines.map(l => l.comment).filter(Boolean).join("; "),
+      overtimeType: "",
+      leaveType: "",
+    }));
+    onSubmit({ employee: emp, periodStart: weekStart, rows, totalHours, submittedAt: new Date().toISOString() });
+    alert("Timesheet submitted successfully!");
+  };
+
+  const inp = { border: "1px solid #e2e8f0", borderRadius: 6, fontSize: 12, fontFamily: "inherit", color: "#1e293b", background: "#fff" };
+  const cellPad = { padding: "6px 10px", verticalAlign: "middle" };
+
+  return (
+    <div style={{ padding: "28px 24px" }}>
+      <h2 style={{ fontSize: 20, fontWeight: 700, color: "#0f172a", marginBottom: 4 }}>Submit Weekly Timesheet</h2>
+      <p style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>Labour hire · Monday – Sunday</p>
+
+      {/* Employee + Week Start */}
+      <div style={{ display: "flex", gap: 16, marginBottom: 24, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 6 }}>Employee</label>
+          <div style={{ padding: "8px 14px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, background: "#f8fafc", color: "#1e293b", minWidth: 220, display: "inline-block" }}>
+            {emp?.name || "—"}
+          </div>
+        </div>
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 6 }}>Week Start (Monday)</label>
+          <input type="date" value={weekStart}
+            onChange={e => { const d = e.target.value; setWeekStart(d); setDays(makeRows(d)); }}
+            style={{ padding: "8px 14px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "inherit", color: "#1e293b", background: "#fff" }} />
+        </div>
+        {/* Hours progress */}
+        <div style={{ marginLeft: "auto", textAlign: "right" }}>
+          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>Total hours</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: totalHours >= TARGET ? "#16a34a" : "#1e293b" }}>
+            {totalHours.toFixed(1)} <span style={{ fontSize: 14, fontWeight: 400, color: "#94a3b8" }}>/ {TARGET}h</span>
+          </div>
+          <div style={{ width: 140, height: 5, background: "#e2e8f0", borderRadius: 99, marginTop: 5, marginLeft: "auto" }}>
+            <div style={{ width: `${Math.min(100, (totalHours / TARGET) * 100)}%`, height: "100%", background: totalHours >= TARGET ? "#16a34a" : "#2563eb", borderRadius: 99, transition: "width 0.2s" }} />
+          </div>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr style={{ background: "#f8fafc" }}>
+              {["Day", "Hours", "Job Code", "Comments", ""].map((h, i) => (
+                <th key={i} style={{ padding: "9px 10px", textAlign: "left", fontWeight: 600, color: "#475569", borderBottom: "2px solid #e2e8f0", whiteSpace: "nowrap", fontSize: 12 }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {days.map((day, di) => {
+              const dayTotal = day.lines.reduce((s, l) => s + Number(l.hours || 0), 0);
+              const rowCount = day.lines.length;
+              const bg = day.isWeekend ? "#f8f4ff" : di % 2 === 0 ? "#fff" : "#fafcff";
+              return day.lines.map((line, li) => {
+                const isFirst = li === 0;
+                const isLast = li === rowCount - 1;
+                return (
+                  <tr key={`${di}-${li}`} style={{ background: bg, borderTop: isFirst && di > 0 ? "2px solid #e2e8f0" : "none", borderBottom: isLast ? "none" : "1px solid #f1f5f9" }}>
+                    {isFirst && (
+                      <td rowSpan={rowCount} style={{ ...cellPad, fontWeight: 600, color: day.isWeekend ? "#7c3aed" : "#1e293b", borderRight: "1px solid #f1f5f9", verticalAlign: "top", paddingTop: 10, whiteSpace: "nowrap", minWidth: 110 }}>
+                        <div>{day.label}</div>
+                        {day.isWeekend && <div style={{ fontSize: 10, color: "#a78bfa", marginTop: 2 }}>Weekend</div>}
+                        {rowCount > 1 && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>{dayTotal.toFixed(1)}h total</div>}
+                      </td>
+                    )}
+                    <td style={{ ...cellPad, minWidth: 72 }}>
+                      <input type="number" step="0.5" min="0" max="16" value={line.hours}
+                        onChange={e => updateLine(di, li, "hours", e.target.value)}
+                        style={{ ...inp, width: 60, padding: "4px 8px", textAlign: "center" }} />
+                    </td>
+                    <td style={{ ...cellPad, minWidth: 180 }}>
+                      <select value={line.jobCode} onChange={e => updateLine(di, li, "jobCode", e.target.value)}
+                        style={{ ...inp, padding: "4px 8px", minWidth: 175 }}>
+                        <option value="">— select job —</option>
+                        {allOpenJobs.map(jb => (
+                          <option key={jb.id} value={jb.id}>{jb.id}{jb.description ? " – " + jb.description.slice(0, 28) : ""}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td style={{ ...cellPad, minWidth: 140 }}>
+                      <input type="text" value={line.comment} onChange={e => updateLine(di, li, "comment", e.target.value)}
+                        placeholder="note…" style={{ ...inp, padding: "4px 8px", width: 140 }} />
+                    </td>
+                    <td style={{ ...cellPad, whiteSpace: "nowrap" }}>
+                      {isLast && (
+                        <button onClick={() => addLine(di)} title="Add job line"
+                          style={{ marginRight: 4, background: "#f1f5f9", border: "none", borderRadius: 5, width: 24, height: 24, cursor: "pointer", fontSize: 14, color: "#475569", lineHeight: 1 }}>+</button>
+                      )}
+                      {rowCount > 1 && (
+                        <button onClick={() => removeLine(di, li)} title="Remove line"
+                          style={{ background: "#fef2f2", border: "none", borderRadius: 5, width: 24, height: 24, cursor: "pointer", fontSize: 14, color: "#dc2626", lineHeight: 1 }}>×</button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              });
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: "flex", gap: 12, marginTop: 24 }}>
+        <button onClick={handleSubmit}
+          style={{ padding: "10px 28px", background: "#1e293b", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" }}>
+          Submit Timesheet
+        </button>
+        <button onClick={() => setDays(makeRows(weekStart))}
+          style={{ padding: "10px 20px", background: "#fff", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 14, fontFamily: "inherit" }}>
+          Reset
+        </button>
       </div>
     </div>
   );
@@ -1367,7 +1566,7 @@ function JobRegister({ importedJobs, setImportedJobs }) {
         </div>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search jobs…"
-            style={{ padding:"8px 12px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:13, fontFamily:"inherit", color:"#1e293b", width:180 }} />
+            style={{ padding:"8px 12px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:13, fontFamily:"inherit", color:"#1e293b", background:"#fff", width:180 }} />
           <div style={{ display:"flex", gap:4 }}>
             {["all","open","closed"].map(s => (
               <button key={s} onClick={() => setStatusFilter(s)} style={pill(statusFilter===s)}>
@@ -1922,7 +2121,10 @@ function EmployeePortal({ user, entries, onSubmit, importedJobs = [] }) {
         ))}
       </nav>
       {view === "submit"
-        ? <TimesheetForm onSubmit={onSubmit} lockedEmployee={user.id} importedJobs={importedJobs} />
+        ? (user.employeeData?.type === "labour-hire"
+            ? <LabourHireTimesheetForm onSubmit={onSubmit} lockedEmployee={user.id} importedJobs={importedJobs} />
+            : <TimesheetForm onSubmit={onSubmit} lockedEmployee={user.id} importedJobs={importedJobs} />
+          )
         : (
           <div style={{ padding: "28px 24px" }}>
             <h2 style={{ fontSize: 20, fontWeight: 700, color: "#0f172a", marginBottom: 20 }}>My Submitted Timesheets</h2>
