@@ -1181,102 +1181,287 @@ function LabourHireTimesheetForm({ onSubmit, lockedEmployee, employeeData, impor
   );
 }
 
-function ReviewPage({ entries }) {
-  const [filter, setFilter] = useState("all");
-  const filtered = filter === "all" ? entries : entries.filter((e) => e.employee?.type === filter);
+function EditTimesheetModal({ entry, entryIdx, allOpenJobs, onSave, onClose }) {
+  const [rows, setRows] = useState(() => JSON.parse(JSON.stringify(entry.rows)));
+  const inp = { border: "1px solid #e2e8f0", borderRadius: 6, fontSize: 12, color: "#1e293b", background: "#fff", fontFamily: "inherit" };
 
-  const exportCSV = () => {
-    if (!filtered.length) return alert("No entries to export.");
+  const updateRow = (ri, field, val) =>
+    setRows(prev => prev.map((r, i) => i !== ri ? r : { ...r, [field]: val }));
+
+  const updateJobEntry = (ri, ji, field, val) =>
+    setRows(prev => prev.map((r, i) => i !== ri ? r : {
+      ...r,
+      jobEntries: (r.jobEntries || []).map((je, j) => j !== ji ? je : { ...je, [field]: val }),
+    }));
+
+  const totalHours = rows.reduce((s, r) => s + Number(r.totalHours ?? r.hours ?? 0), 0);
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+      <div style={{ background: "#fff", borderRadius: 16, padding: 32, width: "min(940px, 95vw)", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+          <div>
+            <h3 style={{ fontSize: 17, fontWeight: 700, color: "#0f172a", margin: 0 }}>Edit Timesheet</h3>
+            <p style={{ fontSize: 13, color: "#64748b", margin: "4px 0 0" }}>{entry.employee?.name} &nbsp;·&nbsp; Period: {entry.periodStart}</p>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1, padding: "0 4px" }}>×</button>
+        </div>
+
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: "#f8fafc" }}>
+                {["Day", "Hours", "Job Code", "Comment", "Rate", "Leave"].map(h => (
+                  <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontWeight: 600, color: "#475569", borderBottom: "2px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, ri) => {
+                const jobEntries = r.jobEntries && r.jobEntries.length > 0
+                  ? r.jobEntries
+                  : [{ jobCode: r.jobCode || "", hours: r.totalHours ?? r.hours ?? 0 }];
+                const rowCount = jobEntries.length;
+                const bg = r.isRDO ? "#fafafa" : r.isHoliday ? "#fff5f5" : r.isWeekend ? "#f8f4ff" : ri % 2 === 0 ? "#fff" : "#fafcff";
+                return jobEntries.map((je, ji) => {
+                  const isFirst = ji === 0;
+                  return (
+                    <tr key={`${ri}-${ji}`} style={{ background: bg, borderTop: isFirst && ri > 0 ? "2px solid #e2e8f0" : "none", borderBottom: "1px solid #f1f5f9" }}>
+                      {isFirst && (
+                        <td rowSpan={rowCount} style={{ padding: "8px 10px", fontWeight: 600, color: r.isRDO ? "#94a3b8" : r.isWeekend ? "#7c3aed" : "#1e293b", verticalAlign: "top", paddingTop: 12, whiteSpace: "nowrap", minWidth: 110, borderRight: "1px solid #f1f5f9" }}>
+                          {r.day}
+                          {r.week && <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 400 }}>Wk {r.week}</div>}
+                          {r.isRDO && <div style={{ fontSize: 10, color: "#94a3b8" }}>RDO</div>}
+                          {r.isHoliday && <div style={{ fontSize: 10, background: "#fee2e2", color: "#dc2626", borderRadius: 4, padding: "1px 5px", marginTop: 2, display: "inline-block", fontWeight: 600 }}>Public Holiday</div>}
+                          {r.isWeekend && <div style={{ fontSize: 10, color: "#a78bfa" }}>Weekend</div>}
+                        </td>
+                      )}
+                      {isFirst && (
+                        <td rowSpan={rowCount} style={{ padding: "8px 10px", verticalAlign: "top", paddingTop: 12 }}>
+                          <input type="number" step="0.5" min="0" max="24" value={r.totalHours ?? r.hours ?? 0}
+                            onChange={e => updateRow(ri, "totalHours", e.target.value)}
+                            style={{ ...inp, width: 60, padding: "4px 8px", textAlign: "center" }} />
+                        </td>
+                      )}
+                      <td style={{ padding: "8px 10px" }}>
+                        <select value={je.jobCode || ""} onChange={e => updateJobEntry(ri, ji, "jobCode", e.target.value)}
+                          style={{ ...inp, padding: "4px 8px", minWidth: 165 }}>
+                          <option value="">— select job —</option>
+                          {allOpenJobs.map(jb => <option key={jb.id} value={jb.id}>{jb.id}{jb.description ? " – " + jb.description.slice(0, 25) : ""}</option>)}
+                        </select>
+                      </td>
+                      {isFirst && (
+                        <td rowSpan={rowCount} style={{ padding: "8px 10px", verticalAlign: "top", paddingTop: 12 }}>
+                          <input type="text" value={r.comment || ""} onChange={e => updateRow(ri, "comment", e.target.value)}
+                            placeholder="note…" style={{ ...inp, padding: "4px 8px", width: 120 }} />
+                        </td>
+                      )}
+                      {isFirst && (
+                        <td rowSpan={rowCount} style={{ padding: "8px 10px", verticalAlign: "top", paddingTop: 12 }}>
+                          <select value={r.overtimeType || ""} onChange={e => updateRow(ri, "overtimeType", e.target.value)}
+                            style={{ ...inp, padding: "4px 8px", minWidth: 110 }}>
+                            <option value="">— none —</option>
+                            <option value="Ordinary">Ordinary</option>
+                            <option value="Overtime">Overtime</option>
+                            <option value="Overtime 1.5x">Overtime 1.5x</option>
+                            <option value="Overtime 2x">Overtime 2x</option>
+                          </select>
+                        </td>
+                      )}
+                      {isFirst && (
+                        <td rowSpan={rowCount} style={{ padding: "8px 10px", verticalAlign: "top", paddingTop: 12 }}>
+                          <select value={r.leaveType || ""} onChange={e => updateRow(ri, "leaveType", e.target.value)}
+                            style={{ ...inp, padding: "4px 8px", minWidth: 130 }}>
+                            <option value="">— none —</option>
+                            {LEAVE_TYPES.map(lt => <option key={lt} value={lt}>{lt}</option>)}
+                          </select>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                });
+              })}
+            </tbody>
+            <tfoot>
+              <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                <td colSpan={2} style={{ padding: "10px 12px", fontWeight: 700, color: "#1e293b", fontSize: 13 }}>Total Hours</td>
+                <td style={{ padding: "10px 12px", fontWeight: 700, fontSize: 14, color: "#1e293b" }}>{Number(totalHours).toFixed(1)}h</td>
+                <td colSpan={3} />
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+          <button onClick={() => onSave(entryIdx, { ...entry, rows, totalHours })}
+            style={{ padding: "10px 24px", background: "#1e293b", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>
+            Save Changes
+          </button>
+          <button onClick={onClose}
+            style={{ padding: "10px 20px", background: "#fff", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 13, fontFamily: "inherit" }}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReviewPage({ entries, onDelete, onUpdate, importedJobs = [] }) {
+  const [filter, setFilter] = useState("all");
+  const [editingEntry, setEditingEntry] = useState(null); // { idx, entry }
+  const [confirmDeleteIdx, setConfirmDeleteIdx] = useState(null);
+
+  const allOpenJobs = [...openJobs, ...importedJobs.filter(j => j.status === "open")];
+
+  // Tag each entry with its real index before filtering
+  const withIdx = entries.map((e, i) => ({ ...e, _idx: i }));
+  const filtered = filter === "all" ? withIdx : withIdx.filter(e => e.employee?.type === filter);
+
+  const buildCSV = (ents) => {
     const headers = ["Employee", "Type", "Period Start", "Day", "Week", "Hours", "Job Allocations", "Comments", "Rate", "Leave Type", "Submitted At"];
     const lines = [headers.join(",")];
-    filtered.forEach((e) => {
-      e.rows.forEach((r) => {
+    ents.forEach(e => {
+      e.rows.forEach(r => {
         const jobs = r.jobEntries || (r.jobCode ? [{ jobCode: r.jobCode, hours: r.hours }] : []);
-        const jobSummary = jobs.filter(je => je.jobCode).map(je => `${je.jobCode}(${je.hours}h)`).join("; ") || "";
+        const jobSummary = jobs.filter(je => je.jobCode).map(je => `${je.jobCode}(${je.hours}h)`).join("; ");
         lines.push([
           e.employee?.name, e.employee?.type, e.periodStart,
-          r.day, r.week, r.totalHours || r.hours || 0, jobSummary, r.comment || "", r.overtimeType || "", r.leaveType || "",
-          new Date(e.submittedAt).toLocaleString()
-        ].join(","));
+          r.day, r.week || "", r.totalHours || r.hours || 0,
+          jobSummary, r.comment || "", r.overtimeType || "", r.leaveType || "",
+          new Date(e.submittedAt).toLocaleString(),
+        ].map(v => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","));
       });
     });
-    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    return lines.join("\n");
+  };
+
+  const downloadCSV = (csv, filename) => {
+    const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = "drc_timesheets.csv"; a.click();
+    a.href = url; a.download = filename; a.click();
   };
+
+  const exportAllCSV = () => {
+    if (!filtered.length) return alert("No entries to export.");
+    downloadCSV(buildCSV(filtered), "drc_timesheets.csv");
+  };
+
+  const exportEntryCSV = (entry) => {
+    const name = (entry.employee?.name || "timesheet").replace(/\s+/g, "_");
+    downloadCSV(buildCSV([entry]), `${name}_${entry.periodStart}.csv`);
+  };
+
+  const btnSm = (color, bg, border) => ({
+    padding: "5px 12px", background: bg, color, border,
+    borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 600,
+    fontFamily: "inherit", whiteSpace: "nowrap",
+  });
 
   return (
     <div style={{ padding: "28px 24px" }}>
+
+      {/* Edit modal */}
+      {editingEntry && (
+        <EditTimesheetModal
+          entry={editingEntry.entry}
+          entryIdx={editingEntry.idx}
+          allOpenJobs={allOpenJobs}
+          onSave={(idx, updated) => { onUpdate(idx, updated); setEditingEntry(null); }}
+          onClose={() => setEditingEntry(null)}
+        />
+      )}
+
+      {/* Delete confirmation */}
+      {confirmDeleteIdx !== null && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+          <div style={{ background: "#fff", borderRadius: 14, padding: 28, width: 400, boxShadow: "0 12px 40px rgba(0,0,0,0.2)" }}>
+            <h3 style={{ margin: "0 0 10px", fontSize: 16, fontWeight: 700, color: "#0f172a" }}>Delete Timesheet?</h3>
+            <p style={{ margin: "0 0 20px", fontSize: 13, color: "#64748b" }}>
+              This will permanently remove the timesheet for <strong>{entries[confirmDeleteIdx]?.employee?.name}</strong> (period {entries[confirmDeleteIdx]?.periodStart}). This cannot be undone.
+            </p>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => { onDelete(confirmDeleteIdx); setConfirmDeleteIdx(null); }}
+                style={{ padding: "9px 20px", background: "#dc2626", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>
+                Delete
+              </button>
+              <button onClick={() => setConfirmDeleteIdx(null)}
+                style={{ padding: "9px 18px", background: "#fff", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 13, fontFamily: "inherit" }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <h2 style={{ fontSize: 20, fontWeight: 700, color: "#0f172a" }}>Review & Export</h2>
         <div style={{ display: "flex", gap: 10 }}>
-          <select value={filter} onChange={(e) => setFilter(e.target.value)} style={{ padding: "7px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+          <select value={filter} onChange={e => setFilter(e.target.value)} style={{ padding: "7px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
             <option value="all">All employees</option>
             <option value="permanent">Permanent only</option>
             <option value="labour-hire">Labour hire only</option>
           </select>
-          <button onClick={exportCSV} style={{ padding: "7px 18px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>
-            Export CSV
+          <button onClick={exportAllCSV} style={{ padding: "7px 18px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>
+            Export All CSV
           </button>
         </div>
       </div>
 
       {filtered.length === 0
         ? <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8", fontSize: 15 }}>No timesheets submitted yet. Use the Submit Timesheet tab.</div>
-        : filtered.map((entry, i) => (
-          <div key={i} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, marginBottom: 16, overflow: "hidden" }}>
+        : filtered.map((entry) => (
+          <div key={entry._idx} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, marginBottom: 16, overflow: "hidden" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ fontWeight: 700, color: "#1e293b", fontSize: 15 }}>{entry.employee?.name}</span>
                 <Badge type={entry.employee?.type} />
                 <Badge type={entry.employee?.contract} />
               </div>
-              <div style={{ fontSize: 12, color: "#94a3b8" }}>
-                Period: {entry.periodStart} &nbsp;|&nbsp; {Number(entry.totalHours).toFixed(1)}h total &nbsp;|&nbsp; Submitted: {new Date(entry.submittedAt).toLocaleDateString()}
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 12, color: "#94a3b8" }}>
+                  Period: {entry.periodStart} &nbsp;|&nbsp; {Number(entry.totalHours).toFixed(1)}h &nbsp;|&nbsp; {new Date(entry.submittedAt).toLocaleDateString()}
+                </span>
+                <button onClick={() => exportEntryCSV(entry)} style={btnSm("#1d4ed8", "#eff6ff", "1px solid #bfdbfe")}>↓ CSV</button>
+                <button onClick={() => setEditingEntry({ idx: entry._idx, entry })} style={btnSm("#1e293b", "#f1f5f9", "1px solid #e2e8f0")}>Edit</button>
+                <button onClick={() => setConfirmDeleteIdx(entry._idx)} style={btnSm("#dc2626", "#fef2f2", "1px solid #fecaca")}>Delete</button>
               </div>
             </div>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr style={{ background: "#f8fafc" }}>
-                  {["Day", "Total Hrs", "Job Allocations", "Comments", "Rate", "Leave / Other"].map((h) => (
+                  {["Day", "Total Hrs", "Job Allocations", "Comments", "Rate", "Leave / Other"].map(h => (
                     <th key={h} style={{ padding: "7px 16px", textAlign: "left", color: "#64748b", fontWeight: 600, borderBottom: "1px solid #f1f5f9" }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {entry.rows.filter((r) => !r.isRDO || r.leaveType).map((r, j) => {
+                {entry.rows.filter(r => !r.isRDO || r.leaveType || Number(r.totalHours || 0) > 0).map((r, j) => {
                   const jobs = r.jobEntries || (r.jobCode ? [{ jobCode: r.jobCode, hours: r.hours }] : []);
                   return (
                     <tr key={j} style={{ borderBottom: "1px solid #f8fafc", verticalAlign: "top" }}>
                       <td style={{ padding: "8px 16px", color: "#475569" }}>{r.day}{r.week ? ` (Wk ${r.week})` : ""}</td>
-                      <td style={{ padding: "8px 16px", fontWeight: 600, color: "#1e293b" }}>{r.isRDO ? "RDO" : `${r.totalHours || r.hours || 0}h`}</td>
+                      <td style={{ padding: "8px 16px", fontWeight: 600, color: "#1e293b" }}>{r.isRDO && !Number(r.totalHours) ? "RDO" : `${r.totalHours || r.hours || 0}h`}</td>
                       <td style={{ padding: "8px 16px" }}>
-                        {r.isRDO ? <span style={{ color: "#cbd5e1" }}>—</span>
-                          : jobs.filter(je => je.jobCode).length > 0
-                            ? <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                                {jobs.filter(je => je.jobCode).map((je, k) => (
-                                  <div key={k} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                    <span style={{ background: "#dbeafe", color: "#1d4ed8", borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>{je.jobCode}</span>
-                                    <span style={{ fontSize: 11, color: "#64748b" }}>{je.hours}h</span>
-                                  </div>
-                                ))}
-                              </div>
-                            : <span style={{ color: "#cbd5e1" }}>—</span>
+                        {jobs.filter(je => je.jobCode).length > 0
+                          ? <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                              {jobs.filter(je => je.jobCode).map((je, k) => (
+                                <div key={k} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  <span style={{ background: "#dbeafe", color: "#1d4ed8", borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>{je.jobCode}</span>
+                                  <span style={{ fontSize: 11, color: "#64748b" }}>{je.hours}h</span>
+                                </div>
+                              ))}
+                            </div>
+                          : <span style={{ color: "#cbd5e1" }}>—</span>
                         }
                       </td>
-                      <td style={{ padding: "8px 16px", color: "#475569", fontStyle: "italic", fontSize: 11 }}>
-                        {r.comment || <span style={{ color: "#cbd5e1" }}>—</span>}
+                      <td style={{ padding: "8px 16px", color: "#475569", fontStyle: "italic", fontSize: 11 }}>{r.comment || <span style={{ color: "#cbd5e1" }}>—</span>}</td>
+                      <td style={{ padding: "8px 16px" }}>
+                        {r.overtimeType ? <span style={{ background: "#fef3c7", color: "#b45309", borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>{r.overtimeType}</span> : <span style={{ color: "#cbd5e1" }}>—</span>}
                       </td>
                       <td style={{ padding: "8px 16px" }}>
-                        {r.overtimeType
-                          ? <span style={{ background: "#fef3c7", color: "#b45309", borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>{r.overtimeType}</span>
-                          : <span style={{ color: "#cbd5e1" }}>—</span>}
-                      </td>
-                      <td style={{ padding: "8px 16px" }}>
-                        {r.leaveType
-                          ? <span style={{ background: "#fef9c3", color: "#92400e", borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>{r.leaveType}</span>
-                          : <span style={{ color: "#cbd5e1" }}>—</span>}
+                        {r.leaveType ? <span style={{ background: "#fef9c3", color: "#92400e", borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>{r.leaveType}</span> : <span style={{ color: "#cbd5e1" }}>—</span>}
                       </td>
                     </tr>
                   );
@@ -2348,6 +2533,22 @@ export default function App() {
     });
   };
 
+  const handleDeleteEntry = (idx) => {
+    setEntries((prev) => {
+      const next = prev.filter((_, i) => i !== idx);
+      saveToServer({ entries: next });
+      return next;
+    });
+  };
+
+  const handleUpdateEntry = (idx, updated) => {
+    setEntries((prev) => {
+      const next = prev.map((e, i) => i === idx ? updated : e);
+      saveToServer({ entries: next });
+      return next;
+    });
+  };
+
   if (!user) return <LoginScreen onLogin={handleLogin} passwords={passwords} extraEmployees={extraEmployees} />;
 
   // Show password change screen
@@ -2371,7 +2572,7 @@ export default function App() {
           <AdminNav current={tab} onChange={setTab} />
           <main>
             {tab === "dashboard" && <Dashboard entries={entries} extraEmployees={extraEmployees} importedJobs={importedJobs} />}
-            {tab === "review" && <ReviewPage entries={entries} />}
+            {tab === "review" && <ReviewPage entries={entries} onDelete={handleDeleteEntry} onUpdate={handleUpdateEntry} importedJobs={importedJobs} />}
             {tab === "jobs" && <JobRegister importedJobs={importedJobs} setImportedJobs={updateImportedJobs} />}
             {tab === "employees" && <EmployeesPage extraEmployees={extraEmployees} setExtraEmployees={updateExtraEmployees} passwords={passwords} setPasswords={updatePasswords} />}
           </main>
