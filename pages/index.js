@@ -1309,14 +1309,27 @@ function EditTimesheetModal({ entry, entryIdx, allOpenJobs, onSave, onClose }) {
 
 function ReviewPage({ entries, onDelete, onUpdate, importedJobs = [] }) {
   const [filter, setFilter] = useState("all");
+  const [sort, setSort] = useState("name-asc");
   const [editingEntry, setEditingEntry] = useState(null); // { idx, entry }
   const [confirmDeleteIdx, setConfirmDeleteIdx] = useState(null);
 
   const allOpenJobs = [...openJobs, ...importedJobs.filter(j => j.status === "open")];
 
-  // Tag each entry with its real index before filtering
+  // Tag each entry with its real index before filtering/sorting
   const withIdx = entries.map((e, i) => ({ ...e, _idx: i }));
-  const filtered = filter === "all" ? withIdx : withIdx.filter(e => e.employee?.type === filter);
+  const filtered = (filter === "all" ? withIdx : withIdx.filter(e => e.employee?.type === filter))
+    .slice()
+    .sort((a, b) => {
+      switch (sort) {
+        case "name-asc":   return (a.employee?.name || "").localeCompare(b.employee?.name || "");
+        case "name-desc":  return (b.employee?.name || "").localeCompare(a.employee?.name || "");
+        case "period-desc": return (b.periodStart || "").localeCompare(a.periodStart || "");
+        case "period-asc":  return (a.periodStart || "").localeCompare(b.periodStart || "");
+        case "hours-desc":  return Number(b.totalHours || 0) - Number(a.totalHours || 0);
+        case "hours-asc":   return Number(a.totalHours || 0) - Number(b.totalHours || 0);
+        default: return 0;
+      }
+    });
 
   const buildCSV = (ents) => {
     const headers = ["Employee", "Type", "Period Start", "Day", "Week", "Hours", "Job Allocations", "Comments", "Rate", "Leave Type", "Submitted At"];
@@ -1397,12 +1410,25 @@ function ReviewPage({ entries, onDelete, onUpdate, importedJobs = [] }) {
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <h2 style={{ fontSize: 20, fontWeight: 700, color: "#0f172a" }}>Review & Export</h2>
-        <div style={{ display: "flex", gap: 10 }}>
-          <select value={filter} onChange={e => setFilter(e.target.value)} style={{ padding: "7px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <select value={filter} onChange={e => setFilter(e.target.value)}
+            style={{ padding: "7px 12px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 13, fontFamily: "inherit", background: "#fff", color: "#1e293b", cursor: "pointer", outline: "none", appearance: "auto" }}>
             <option value="all">All employees</option>
             <option value="permanent">Permanent only</option>
             <option value="labour-hire">Labour hire only</option>
           </select>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff", border: "1px solid #cbd5e1", borderRadius: 8, padding: "0 10px 0 12px" }}>
+            <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 600, whiteSpace: "nowrap" }}>Sort:</span>
+            <select value={sort} onChange={e => setSort(e.target.value)}
+              style={{ padding: "7px 4px", border: "none", fontSize: 13, fontFamily: "inherit", background: "transparent", color: "#1e293b", cursor: "pointer", outline: "none", appearance: "auto", minWidth: 160 }}>
+              <option value="name-asc">Name A → Z</option>
+              <option value="name-desc">Name Z → A</option>
+              <option value="period-desc">Period (Newest first)</option>
+              <option value="period-asc">Period (Oldest first)</option>
+              <option value="hours-desc">Hours (High → Low)</option>
+              <option value="hours-asc">Hours (Low → High)</option>
+            </select>
+          </div>
           <button onClick={exportAllCSV} style={{ padding: "7px 18px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>
             Export All CSV
           </button>
@@ -1411,8 +1437,22 @@ function ReviewPage({ entries, onDelete, onUpdate, importedJobs = [] }) {
 
       {filtered.length === 0
         ? <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8", fontSize: 15 }}>No timesheets submitted yet. Use the Submit Timesheet tab.</div>
-        : filtered.map((entry) => (
-          <div key={entry._idx} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, marginBottom: 16, overflow: "hidden" }}>
+        : filtered.map((entry, i) => {
+          const isNameSort = sort.startsWith("name");
+          const prevName = i > 0 ? filtered[i - 1].employee?.name : null;
+          const showNameHeader = isNameSort && entry.employee?.name !== prevName;
+          return (
+          <div key={entry._idx}>
+            {showNameHeader && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, margin: i === 0 ? "0 0 12px" : "24px 0 12px" }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#1e293b" }}>{entry.employee?.name}</span>
+                <div style={{ flex: 1, height: 1, background: "#e2e8f0" }} />
+                <span style={{ fontSize: 11, color: "#94a3b8" }}>
+                  {filtered.filter(e => e.employee?.name === entry.employee?.name).length} submission{filtered.filter(e => e.employee?.name === entry.employee?.name).length !== 1 ? "s" : ""}
+                </span>
+              </div>
+            )}
+          <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, marginBottom: 16, overflow: "hidden" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ fontWeight: 700, color: "#1e293b", fontSize: 15 }}>{entry.employee?.name}</span>
@@ -1469,7 +1509,9 @@ function ReviewPage({ entries, onDelete, onUpdate, importedJobs = [] }) {
               </tbody>
             </table>
           </div>
-        ))
+          </div>
+          );
+        })
       }
     </div>
   );
