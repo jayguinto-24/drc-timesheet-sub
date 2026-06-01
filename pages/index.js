@@ -641,7 +641,7 @@ function Dashboard({ entries, extraEmployees = [], importedJobs = [] }) {
 
 function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
   const [employee, setEmployee] = useState(lockedEmployee || "");
-  const [periodStart, setPeriodStart] = useState("");
+  const DRAFT_KEY = `drc_draft_perm_${lockedEmployee || "admin"}`;
 
   // Data model: one row per JOB LINE (not per day)
   // Each row: { day, week, isRDO, isHoliday, isWeekend, defaultHours, date, jobCode, hours, comment, overtimeType, leaveType }
@@ -665,7 +665,24 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
     }));
   };
 
+  const [periodStart, setPeriodStart] = useState("");
   const [rows, setRows] = useState(() => makeDefaultRows(""));
+
+  // Restore draft after hydration
+  useEffect(() => {
+    try {
+      const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}");
+      if (d.periodStart) {
+        setPeriodStart(d.periodStart);
+        setRows(d.rows || makeDefaultRows(d.periodStart));
+      }
+    } catch {}
+  }, []);
+
+  // Auto-save draft to localStorage on every change
+  useEffect(() => {
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ periodStart, rows })); } catch {}
+  }, [periodStart, rows]);
 
   // All open jobs (built-in + imported)
   const allOpenJobs = [...openJobs, ...importedJobs.filter(j => j.status === "open")];
@@ -732,6 +749,7 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
       leaveType: rows.find((r, i) => g.lines.includes(i) && r.leaveType)?.leaveType || "",
     }));
     onSubmit({ employee: emp, periodStart, rows: grouped, totalHours, submittedAt: new Date().toISOString() });
+    try { localStorage.removeItem(DRAFT_KEY); } catch {}
     alert("Timesheet submitted successfully!");
   };
 
@@ -1021,7 +1039,7 @@ function buildWeekFromMonday(mondayStr) {
 
 function LabourHireTimesheetForm({ onSubmit, lockedEmployee, employeeData, importedJobs = [] }) {
   const emp = employeeData || [...EMPLOYEES].find(e => e.id === lockedEmployee);
-  const [weekStart, setWeekStart] = useState("");
+  const DRAFT_KEY = `drc_draft_lh_${lockedEmployee}`;
   const allOpenJobs = [...openJobs, ...importedJobs.filter(j => j.status === "open")];
 
   const makeRows = (mondayStr) =>
@@ -1030,7 +1048,24 @@ function LabourHireTimesheetForm({ onSubmit, lockedEmployee, employeeData, impor
       lines: [{ jobCode: "", hours: 0, comment: "" }],
     }));
 
+  const [weekStart, setWeekStart] = useState("");
   const [days, setDays] = useState(() => makeRows(""));
+
+  // Restore draft after hydration
+  useEffect(() => {
+    try {
+      const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}");
+      if (d.weekStart) {
+        setWeekStart(d.weekStart);
+        setDays(d.days || makeRows(d.weekStart));
+      }
+    } catch {}
+  }, []);
+
+  // Auto-save draft to localStorage on every change
+  useEffect(() => {
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ weekStart, days })); } catch {}
+  }, [weekStart, days]);
 
   const totalHours = days.reduce((s, d) => s + d.lines.reduce((ls, l) => ls + Number(l.hours || 0), 0), 0);
   const TARGET = 38;
@@ -1066,6 +1101,7 @@ function LabourHireTimesheetForm({ onSubmit, lockedEmployee, employeeData, impor
       leaveType: "",
     }));
     onSubmit({ employee: emp, periodStart: weekStart, rows, totalHours, submittedAt: new Date().toISOString() });
+    try { localStorage.removeItem(DRAFT_KEY); } catch {}
     alert("Timesheet submitted successfully!");
   };
 
@@ -2501,6 +2537,15 @@ export default function App() {
   const [extraEmployees, setExtraEmployees] = useState([]);
   const [passwords, setPasswords] = useState({});
 
+  // Restore session after hydration (must run client-side only)
+  useEffect(() => {
+    try {
+      const u = JSON.parse(sessionStorage.getItem("drc_user") || "null");
+      const t = sessionStorage.getItem("drc_tab") || "dashboard";
+      if (u) { setUser(u); setTab(t); }
+    } catch {}
+  }, []);
+
   // Load all shared data from the server on mount
   useEffect(() => {
     fetch("/api/store")
@@ -2553,8 +2598,10 @@ export default function App() {
   };
 
   const handleLogin = (u) => {
+    const t = u.role === "admin" ? "dashboard" : "submit";
     setUser(u);
-    setTab(u.role === "admin" ? "dashboard" : "submit");
+    setTab(t);
+    try { sessionStorage.setItem("drc_user", JSON.stringify(u)); sessionStorage.setItem("drc_tab", t); } catch {}
     // Force password change if still on default
     if (u.role === "employee" && getPassword(u.id) === DEFAULT_PASSWORD) {
       setChangingPassword(true);
@@ -2565,6 +2612,7 @@ export default function App() {
     setUser(null);
     setTab("dashboard");
     setChangingPassword(false);
+    try { sessionStorage.removeItem("drc_user"); sessionStorage.removeItem("drc_tab"); } catch {}
   };
 
   const handleSubmit = (entry) => {
@@ -2611,7 +2659,7 @@ export default function App() {
 
       {user.role === "admin" ? (
         <>
-          <AdminNav current={tab} onChange={setTab} />
+          <AdminNav current={tab} onChange={t => { setTab(t); try { sessionStorage.setItem("drc_tab", t); } catch {} }} />
           <main>
             {tab === "dashboard" && <Dashboard entries={entries} extraEmployees={extraEmployees} importedJobs={importedJobs} />}
             {tab === "review" && <ReviewPage entries={entries} onDelete={handleDeleteEntry} onUpdate={handleUpdateEntry} importedJobs={importedJobs} />}
