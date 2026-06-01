@@ -789,7 +789,26 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
         </div>
         <div>
           <label style={{ fontSize: 12, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 6 }}>Period Start (Thursday)</label>
-          <input type="date" value={periodStart} onChange={e => { const d = e.target.value; setPeriodStart(d); setRows(makeDefaultRows(d)); }}
+          <input type="date" value={periodStart} onChange={e => {
+            const d = e.target.value;
+            setPeriodStart(d);
+            // Rebuild day structure for the new date but preserve user-entered data
+            const template = makeDefaultRows(d);
+            setRows(prev => template.map((tpl, i) => {
+              const old = prev[i];
+              if (!old) return tpl;
+              return {
+                ...tpl,
+                // Keep what the user typed
+                hours: old.hours,
+                jobCode: old.jobCode,
+                comment: old.comment,
+                overtimeType: old.overtimeType,
+                // Only reset leaveType if the new day is a public holiday, otherwise keep
+                leaveType: tpl.isHoliday ? "Public Holiday" : old.leaveType,
+              };
+            }));
+          }}
             style={{ padding: "8px 14px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "inherit", color: "#1e293b", background: "#fff" }} />
         </div>
       </div>
