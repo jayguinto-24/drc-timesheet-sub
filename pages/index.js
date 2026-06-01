@@ -668,21 +668,30 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
   const [periodStart, setPeriodStart] = useState("");
   const [rows, setRows] = useState(() => makeDefaultRows(""));
 
-  // Restore draft after hydration
+  // Restore last active period + its rows after hydration
   useEffect(() => {
     try {
-      const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}");
-      if (d.periodStart) {
-        setPeriodStart(d.periodStart);
-        setRows(d.rows || makeDefaultRows(d.periodStart));
-      }
+      const last = localStorage.getItem(DRAFT_KEY);
+      if (!last) return;
+      const { periodStart: p } = JSON.parse(last);
+      if (!p) return;
+      setPeriodStart(p);
+      const saved = localStorage.getItem(`${DRAFT_KEY}_${p}`);
+      setRows(saved ? JSON.parse(saved) : makeDefaultRows(p));
     } catch {}
   }, []);
 
-  // Auto-save draft to localStorage on every change
+  // Remember which period was last active
   useEffect(() => {
-    try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ periodStart, rows })); } catch {}
-  }, [periodStart, rows]);
+    if (!periodStart) return;
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ periodStart })); } catch {}
+  }, [periodStart]);
+
+  // Save rows under the current period's own key
+  useEffect(() => {
+    if (!periodStart) return;
+    try { localStorage.setItem(`${DRAFT_KEY}_${periodStart}`, JSON.stringify(rows)); } catch {}
+  }, [rows, periodStart]);
 
   // All open jobs (built-in + imported)
   const allOpenJobs = [...openJobs, ...importedJobs.filter(j => j.status === "open")];
@@ -792,22 +801,12 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
           <input type="date" value={periodStart} onChange={e => {
             const d = e.target.value;
             setPeriodStart(d);
-            // Rebuild day structure for the new date but preserve user-entered data
-            const template = makeDefaultRows(d);
-            setRows(prev => template.map((tpl, i) => {
-              const old = prev[i];
-              if (!old) return tpl;
-              return {
-                ...tpl,
-                // Keep what the user typed
-                hours: old.hours,
-                jobCode: old.jobCode,
-                comment: old.comment,
-                overtimeType: old.overtimeType,
-                // Only reset leaveType if the new day is a public holiday, otherwise keep
-                leaveType: tpl.isHoliday ? "Public Holiday" : old.leaveType,
-              };
-            }));
+            // Load saved draft for this specific period, or start fresh
+            try {
+              const saved = localStorage.getItem(`${DRAFT_KEY}_${d}`);
+              if (saved) { setRows(JSON.parse(saved)); return; }
+            } catch {}
+            setRows(makeDefaultRows(d));
           }}
             style={{ padding: "8px 14px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "inherit", color: "#1e293b", background: "#fff" }} />
         </div>
@@ -1070,21 +1069,30 @@ function LabourHireTimesheetForm({ onSubmit, lockedEmployee, employeeData, impor
   const [weekStart, setWeekStart] = useState("");
   const [days, setDays] = useState(() => makeRows(""));
 
-  // Restore draft after hydration
+  // Restore last active week + its data after hydration
   useEffect(() => {
     try {
-      const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}");
-      if (d.weekStart) {
-        setWeekStart(d.weekStart);
-        setDays(d.days || makeRows(d.weekStart));
-      }
+      const last = localStorage.getItem(DRAFT_KEY);
+      if (!last) return;
+      const { weekStart: w } = JSON.parse(last);
+      if (!w) return;
+      setWeekStart(w);
+      const saved = localStorage.getItem(`${DRAFT_KEY}_${w}`);
+      setDays(saved ? JSON.parse(saved) : makeRows(w));
     } catch {}
   }, []);
 
-  // Auto-save draft to localStorage on every change
+  // Remember which week was last active
   useEffect(() => {
-    try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ weekStart, days })); } catch {}
-  }, [weekStart, days]);
+    if (!weekStart) return;
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ weekStart })); } catch {}
+  }, [weekStart]);
+
+  // Save days under the current week's own key
+  useEffect(() => {
+    if (!weekStart) return;
+    try { localStorage.setItem(`${DRAFT_KEY}_${weekStart}`, JSON.stringify(days)); } catch {}
+  }, [days, weekStart]);
 
   const totalHours = days.reduce((s, d) => s + d.lines.reduce((ls, l) => ls + Number(l.hours || 0), 0), 0);
   const TARGET = 38;
@@ -1143,7 +1151,15 @@ function LabourHireTimesheetForm({ onSubmit, lockedEmployee, employeeData, impor
         <div>
           <label style={{ fontSize: 12, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 6 }}>Week Start (Monday)</label>
           <input type="date" value={weekStart}
-            onChange={e => { const d = e.target.value; setWeekStart(d); setDays(makeRows(d)); }}
+            onChange={e => {
+              const d = e.target.value;
+              setWeekStart(d);
+              try {
+                const saved = localStorage.getItem(`${DRAFT_KEY}_${d}`);
+                if (saved) { setDays(JSON.parse(saved)); return; }
+              } catch {}
+              setDays(makeRows(d));
+            }}
             style={{ padding: "8px 14px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "inherit", color: "#1e293b", background: "#fff" }} />
         </div>
         {/* Hours progress */}
