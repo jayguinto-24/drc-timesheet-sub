@@ -43,7 +43,8 @@ async function fetchAllJobs(baseUrl, token) {
   }
 
   const jobs = all.map((job) => {
-    const jobNo = job.OrderNo && job.OrderNo !== "0" ? job.OrderNo : String(job.ID);
+    const rawNo = job.OrderNo && job.OrderNo !== "0" ? job.OrderNo : String(job.ID);
+    const jobNo = `AP${rawNo}`;
     const name = job.Name || "";
 
     // Status is an object: { ID, Name, Color }

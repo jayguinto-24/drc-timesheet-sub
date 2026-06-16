@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 const JOBS = [
   { id: "AP2601101", label: "AP2601101 – Switchboard Install A", status: "open" },
@@ -101,7 +101,36 @@ const FORTNIGHT_OFFSETS = [
 
 // Helper: format date as YYYY-MM-DD
 function fmtDate(d) {
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return y + "-" + m + "-" + day;
+}
+
+function fmtDisplay(dateStr) {
+  if (!dateStr) return "";
+  const [y, m, d] = dateStr.split("-");
+  return d + "/" + m + "/" + y;
+}
+
+function defaultPeriodStart() {
+  const ANCHOR = new Date("2026-01-01T00:00:00");
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const daysDiff = Math.floor((today - ANCHOR) / (1000 * 60 * 60 * 24));
+  const offset = ((daysDiff % 14) + 14) % 14;
+  const start = new Date(today);
+  start.setDate(today.getDate() - offset);
+  return fmtDate(start);
+}
+
+function defaultWeekStart() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dow = today.getDay();
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
+  return fmtDate(monday);
 }
 
 // Build a fortnight template from a given period start date (Thursday)
@@ -125,14 +154,16 @@ function buildFortnightFromDate(periodStartStr) {
     const isHoliday = PUBLIC_HOLIDAYS_2026.has(dateStr);
     const dayNum = date.getDate();
     const monthShort = date.toLocaleString("en-AU", { month: "short" });
-    const label = `${d.label} ${dayNum} ${monthShort}`;
+    const DAY_SHORT = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    const label = `${DAY_SHORT[date.getDay()]} ${dayNum} ${monthShort}`;
+    const isWeekend = date.getDay() === 0 || date.getDay() === 6;
     return {
       day: label,
       week: d.week,
       isRDO,
       isHoliday,
-      isWeekend: d.isWeekend || false,
-      defaultHours: isRDO ? 0 : d.defaultHours,
+      isWeekend,
+      defaultHours: (isRDO || isWeekend) ? 0 : d.defaultHours,
       date: dateStr,
     };
   });
@@ -642,6 +673,7 @@ function Dashboard({ entries, extraEmployees = [], importedJobs = [] }) {
 function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
   const [employee, setEmployee] = useState(lockedEmployee || "");
   const DRAFT_KEY = `drc_draft_perm_${lockedEmployee || "admin"}`;
+  const periodPickerRef = useRef(null);
 
   // Data model: one row per JOB LINE (not per day)
   // Each row: { day, week, isRDO, isHoliday, isWeekend, defaultHours, date, jobCode, hours, comment, overtimeType, leaveType }
@@ -668,24 +700,26 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
   const [periodStart, setPeriodStart] = useState("");
   const [rows, setRows] = useState(() => makeDefaultRows(""));
 
-  // Restore last active period + its rows after hydration
+  // Default to current pay period; restore draft rows for that period
   useEffect(() => {
+    const current = defaultPeriodStart();
+    setPeriodStart(current);
     try {
-      const last = localStorage.getItem(DRAFT_KEY);
-      if (!last) return;
-      const { periodStart: p } = JSON.parse(last);
-      if (!p) return;
-      setPeriodStart(p);
-      const saved = localStorage.getItem(`${DRAFT_KEY}_${p}`);
-      setRows(saved ? JSON.parse(saved) : makeDefaultRows(p));
-    } catch {}
+      const saved = localStorage.getItem(`${DRAFT_KEY}_${current}`);
+      if (saved) {
+        const fresh = makeDefaultRows(current);
+        const parsed = JSON.parse(saved);
+        setRows(fresh.map((f, i) => parsed[i]
+          ? { ...parsed[i], isWeekend: f.isWeekend, isHoliday: f.isHoliday, isRDO: f.isRDO, defaultHours: f.defaultHours, day: f.day }
+          : f
+        ));
+      } else {
+        setRows(makeDefaultRows(current));
+      }
+    } catch {
+      setRows(makeDefaultRows(current));
+    }
   }, []);
-
-  // Remember which period was last active
-  useEffect(() => {
-    if (!periodStart) return;
-    try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ periodStart })); } catch {}
-  }, [periodStart]);
 
   // Save rows under the current period's own key
   useEffect(() => {
@@ -798,17 +832,19 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
         </div>
         <div>
           <label style={{ fontSize: 12, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 6 }}>Period Start (Thursday)</label>
-          <input type="date" value={periodStart} onChange={e => {
+          <div onClick={() => { try { periodPickerRef.current?.showPicker(); } catch(e) { periodPickerRef.current?.click(); } }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, background: "#fff", cursor: "pointer", userSelect: "none" }}>
+            <span style={{ color: periodStart ? "#1e293b" : "#94a3b8", whiteSpace: "nowrap" }}>{fmtDisplay(periodStart) || "Select period…"}</span>
+            <span style={{ color: "#94a3b8", fontSize: 13 }}>&#128197;</span>
+          </div>
+          <input ref={periodPickerRef} type="date" value={periodStart} onChange={e => {
             const d = e.target.value;
             setPeriodStart(d);
-            // Load saved draft for this specific period, or start fresh
             try {
               const saved = localStorage.getItem(`${DRAFT_KEY}_${d}`);
               if (saved) { setRows(JSON.parse(saved)); return; }
             } catch {}
             setRows(makeDefaultRows(d));
-          }}
-            style={{ padding: "8px 14px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "inherit", color: "#1e293b", background: "#fff" }} />
+          }} style={{ position: "absolute", opacity: 0, pointerEvents: "none", width: 0, height: 0 }} />
         </div>
       </div>
 
@@ -1058,6 +1094,7 @@ function buildWeekFromMonday(mondayStr) {
 function LabourHireTimesheetForm({ onSubmit, lockedEmployee, employeeData, importedJobs = [] }) {
   const emp = employeeData || [...EMPLOYEES].find(e => e.id === lockedEmployee);
   const DRAFT_KEY = `drc_draft_lh_${lockedEmployee}`;
+  const weekPickerRef = useRef(null);
   const allOpenJobs = [...openJobs, ...importedJobs.filter(j => j.status === "open")];
 
   const makeRows = (mondayStr) =>
@@ -1069,24 +1106,17 @@ function LabourHireTimesheetForm({ onSubmit, lockedEmployee, employeeData, impor
   const [weekStart, setWeekStart] = useState("");
   const [days, setDays] = useState(() => makeRows(""));
 
-  // Restore last active week + its data after hydration
+  // Default to current week; restore draft for that week
   useEffect(() => {
+    const current = defaultWeekStart();
+    setWeekStart(current);
     try {
-      const last = localStorage.getItem(DRAFT_KEY);
-      if (!last) return;
-      const { weekStart: w } = JSON.parse(last);
-      if (!w) return;
-      setWeekStart(w);
-      const saved = localStorage.getItem(`${DRAFT_KEY}_${w}`);
-      setDays(saved ? JSON.parse(saved) : makeRows(w));
-    } catch {}
+      const saved = localStorage.getItem(`${DRAFT_KEY}_${current}`);
+      setDays(saved ? JSON.parse(saved) : makeRows(current));
+    } catch {
+      setDays(makeRows(current));
+    }
   }, []);
-
-  // Remember which week was last active
-  useEffect(() => {
-    if (!weekStart) return;
-    try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ weekStart })); } catch {}
-  }, [weekStart]);
 
   // Save days under the current week's own key
   useEffect(() => {
@@ -1150,17 +1180,19 @@ function LabourHireTimesheetForm({ onSubmit, lockedEmployee, employeeData, impor
         </div>
         <div>
           <label style={{ fontSize: 12, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 6 }}>Week Start (Monday)</label>
-          <input type="date" value={weekStart}
-            onChange={e => {
-              const d = e.target.value;
-              setWeekStart(d);
-              try {
-                const saved = localStorage.getItem(`${DRAFT_KEY}_${d}`);
-                if (saved) { setDays(JSON.parse(saved)); return; }
-              } catch {}
-              setDays(makeRows(d));
-            }}
-            style={{ padding: "8px 14px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "inherit", color: "#1e293b", background: "#fff" }} />
+          <div onClick={() => { try { weekPickerRef.current?.showPicker(); } catch(e) { weekPickerRef.current?.click(); } }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, background: "#fff", cursor: "pointer", userSelect: "none" }}>
+            <span style={{ color: weekStart ? "#1e293b" : "#94a3b8", whiteSpace: "nowrap" }}>{fmtDisplay(weekStart) || "Select week…"}</span>
+            <span style={{ color: "#94a3b8", fontSize: 13 }}>&#128197;</span>
+          </div>
+          <input ref={weekPickerRef} type="date" value={weekStart} onChange={e => {
+            const d = e.target.value;
+            setWeekStart(d);
+            try {
+              const saved = localStorage.getItem(`${DRAFT_KEY}_${d}`);
+              if (saved) { setDays(JSON.parse(saved)); return; }
+            } catch {}
+            setDays(makeRows(d));
+          }} style={{ position: "absolute", opacity: 0, pointerEvents: "none", width: 0, height: 0 }} />
         </div>
         {/* Hours progress */}
         <div style={{ marginLeft: "auto", textAlign: "right" }}>
@@ -2724,7 +2756,13 @@ export default function App() {
 
   const handleSubmit = (entry) => {
     setEntries((prev) => {
-      const next = [...prev, entry];
+      const idx = prev.findIndex(e =>
+        e.employee?.id === entry.employee?.id &&
+        e.periodStart === entry.periodStart
+      );
+      const next = idx >= 0
+        ? prev.map((e, i) => i === idx ? entry : e)
+        : [...prev, entry];
       saveToServer({ entries: next });
       return next;
     });
