@@ -359,21 +359,62 @@ function Dashboard({ entries, extraEmployees = [], importedJobs = [] }) {
       {/* ── OVERVIEW TAB ── */}
       {activeTab === "overview" && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-          {card(<>
-            {sectionTitle("Open Jobs")}
-            {allOpenJobs.length === 0
-              ? <p style={{ color: "#94a3b8", fontSize: 13 }}>No open jobs.</p>
-              : allOpenJobs.map(j => (
-                <div key={j.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #f1f5f9" }}>
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: "#1e293b" }}>{j.id}</div>
-                    <div style={{ fontSize: 11, color: "#94a3b8" }}>{j.description || j.label?.split("–")[1]?.trim()}</div>
-                  </div>
-                  <JobBadge status={j.status} simproStatus={j.simproStatus} simproColor={j.simproColor} />
-                </div>
-              ))
-            }
-          </>)}
+
+          {(() => {
+            const currentFortnight = defaultPeriodStart();
+            const currentWeek = defaultWeekStart();
+            const todayMs = new Date(); todayMs.setHours(0,0,0,0);
+            const missing = allEmployees.map(emp => {
+              const isLH = emp.type === "labour-hire";
+              const expectedStart = isLH ? currentWeek : currentFortnight;
+              const submitted = entries.some(e => e.employee?.id === emp.id && e.periodStart === expectedStart);
+              if (submitted) return null;
+              const startDate = new Date(expectedStart + "T00:00:00");
+              const daysSince = Math.floor((todayMs - startDate) / (1000 * 60 * 60 * 24));
+              return { emp, isLH, expectedStart, daysSince };
+            }).filter(Boolean).sort((a, b) => a.emp.name.localeCompare(b.emp.name));
+            return card(<>
+              {sectionTitle("⚠️ Missing Timesheets")}
+              {missing.length === 0
+                ? <p style={{ fontSize: 13, color: "#16a34a", fontWeight: 600 }}>✅ All employees have submitted for the current period.</p>
+                : (
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                        <th style={{ padding: "8px 10px", textAlign: "left", fontWeight: 700, color: "#475569", fontSize: 11, textTransform: "uppercase" }}>Employee</th>
+                        <th style={{ padding: "8px 10px", textAlign: "left", fontWeight: 700, color: "#475569", fontSize: 11, textTransform: "uppercase" }}>Type</th>
+                        <th style={{ padding: "8px 10px", textAlign: "left", fontWeight: 700, color: "#475569", fontSize: 11, textTransform: "uppercase" }}>Missing Period</th>
+                        <th style={{ padding: "8px 10px", textAlign: "center", fontWeight: 700, color: "#475569", fontSize: 11, textTransform: "uppercase" }}>Days</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {missing.map(({ emp, isLH, expectedStart, daysSince }, i) => {
+                        const parts = expectedStart.split("-");
+                        const displayDate = parts[2] + "/" + parts[1] + "/" + parts[0];
+                        const urgency = daysSince >= 7 ? "#dc2626" : daysSince >= 3 ? "#ea580c" : "#ca8a04";
+                        return (
+                          <tr key={emp.id} style={{ borderBottom: "1px solid #f1f5f9", background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                            <td style={{ padding: "9px 10px", fontWeight: 600, color: "#0f172a" }}>{emp.name}</td>
+                            <td style={{ padding: "9px 10px" }}>
+                              <span style={{ background: isLH ? "#fef3c7" : "#ede9fe", color: isLH ? "#92400e" : "#5b21b6", borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 700 }}>
+                                {isLH ? "Labour Hire" : "Permanent"}
+                              </span>
+                            </td>
+                            <td style={{ padding: "9px 10px", color: "#475569" }}>{isLH ? "Week of" : "From"} <strong>{displayDate}</strong></td>
+                            <td style={{ padding: "9px 10px", textAlign: "center" }}>
+                              <span style={{ background: urgency + "18", color: urgency, borderRadius: 20, padding: "2px 10px", fontSize: 11, fontWeight: 700 }}>
+                                {daysSince === 0 ? "Today" : daysSince + "d"}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )
+              }
+            </>);
+          })()}
 
           {card(<>
             {sectionTitle("Pay Cycle Overview")}
