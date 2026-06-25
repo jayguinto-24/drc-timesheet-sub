@@ -69,13 +69,27 @@ const RDO_MONDAYS_2026 = new Set([
   "2026-06-29","2026-07-06","2026-07-20","2026-08-03",
   "2026-08-17","2026-08-31","2026-09-14","2026-09-28",
   "2026-10-12","2026-11-02","2026-11-16","2026-11-30",
-  "2026-12-07",
+  "2026-12-07","2026-12-21",
+  // 2027
+  "2027-01-04","2027-01-18","2027-02-01","2027-02-15",
+  "2027-03-01","2027-03-15","2027-03-29","2027-04-12",
+  "2027-04-26","2027-05-10","2027-05-24","2027-06-07",
+  "2027-06-21","2027-07-05","2027-07-19","2027-08-02",
+  "2027-08-16","2027-08-30","2027-09-13","2027-09-27",
+  "2027-10-11","2027-10-25","2027-11-08","2027-11-22",
+  "2027-12-06","2027-12-20",
 ]);
 
 // Public Holidays 2026 (QLD / national)
 const PUBLIC_HOLIDAYS_2026 = new Set([
+  // 2026 (QLD)
   "2026-01-01","2026-01-26","2026-03-09","2026-04-03",
-  "2026-04-06","2026-06-08","2026-12-25","2026-12-26",
+  "2026-04-06","2026-04-25","2026-05-04","2026-06-08",
+  "2026-12-25","2026-12-28",
+  // 2027 (QLD)
+  "2027-01-01","2027-01-26","2027-04-02","2027-04-03",
+  "2027-04-05","2027-04-25","2027-04-26","2027-05-03",
+  "2027-06-14","2027-12-25","2027-12-27","2027-12-28",
 ]);
 
 // Fortnight structure — days relative to period start (Thursday = day 0)
@@ -90,8 +104,8 @@ const FORTNIGHT_OFFSETS = [
   { label: "Mon",              offset: 4,  week: 1, defaultHours: 8.5 },
   { label: "Tue",              offset: 5,  week: 1, defaultHours: 8.5 },
   { label: "Wed",              offset: 6,  week: 1, defaultHours: 8.5 },
-  { label: "Thu",              offset: 7,  week: 1, defaultHours: 8.5 },
-  { label: "Fri",              offset: 8,  week: 1, defaultHours: 8.0 },
+  { label: "Thu",              offset: 7,  week: 2, defaultHours: 8.5 },
+  { label: "Fri",              offset: 8,  week: 2, defaultHours: 8.0 },
   { label: "Sat",              offset: 9,  week: 2, defaultHours: 0, isWeekend: true },
   { label: "Sun",              offset: 10, week: 2, defaultHours: 0, isWeekend: true },
   { label: "Mon",              offset: 11, week: 2, defaultHours: 0 }, // RDO Mon — dynamic
@@ -833,7 +847,7 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
       leaveType: rows.find((r, i) => g.lines.includes(i) && r.leaveType)?.leaveType || "",
     }));
     onSubmit({ employee: emp, periodStart, rows: grouped, totalHours, submittedAt: new Date().toISOString() });
-    try { localStorage.removeItem(DRAFT_KEY); } catch {}
+    try { localStorage.removeItem(`${DRAFT_KEY}_${periodStart}`); } catch {}
     alert("Timesheet submitted successfully!");
   };
 
@@ -879,12 +893,23 @@ function TimesheetForm({ onSubmit, lockedEmployee, importedJobs = [] }) {
           </div>
           <input ref={periodPickerRef} type="date" value={periodStart} onChange={e => {
             const d = e.target.value;
-            setPeriodStart(d);
+            try { localStorage.setItem(`${DRAFT_KEY}_${periodStart}`, JSON.stringify(rows)); } catch {}
+            // Snap to nearest Thursday
+            const sel = new Date(d + "T00:00:00");
+            const daysBack = (sel.getDay() + 3) % 7;
+            sel.setDate(sel.getDate() - daysBack);
+            const snapped = fmtDate(sel);
+            setPeriodStart(snapped);
             try {
-              const saved = localStorage.getItem(`${DRAFT_KEY}_${d}`);
-              if (saved) { setRows(JSON.parse(saved)); return; }
+              const saved = localStorage.getItem(`${DRAFT_KEY}_${snapped}`);
+              if (saved) {
+                const fresh = makeDefaultRows(snapped);
+                const parsed = JSON.parse(saved);
+                setRows(fresh.map((f, i) => parsed[i] ? { ...parsed[i], isWeekend: f.isWeekend, isHoliday: f.isHoliday, isRDO: f.isRDO, defaultHours: f.defaultHours, day: f.day } : f));
+                return;
+              }
             } catch {}
-            setRows(makeDefaultRows(d));
+            setRows(makeDefaultRows(snapped));
           }} style={{ position: "absolute", opacity: 0, pointerEvents: "none", width: 0, height: 0 }} />
         </div>
       </div>
@@ -1199,7 +1224,7 @@ function LabourHireTimesheetForm({ onSubmit, lockedEmployee, employeeData, impor
       leaveType: "",
     }));
     onSubmit({ employee: emp, periodStart: weekStart, rows, totalHours, submittedAt: new Date().toISOString() });
-    try { localStorage.removeItem(DRAFT_KEY); } catch {}
+    try { localStorage.removeItem(`${DRAFT_KEY}_${weekStart}`); } catch {}
     alert("Timesheet submitted successfully!");
   };
 
@@ -1227,12 +1252,18 @@ function LabourHireTimesheetForm({ onSubmit, lockedEmployee, employeeData, impor
           </div>
           <input ref={weekPickerRef} type="date" value={weekStart} onChange={e => {
             const d = e.target.value;
-            setWeekStart(d);
+            try { localStorage.setItem(`${DRAFT_KEY}_${weekStart}`, JSON.stringify(days)); } catch {}
+            // Snap to Monday of selected week
+            const sel = new Date(d + "T00:00:00");
+            const dow = sel.getDay();
+            sel.setDate(sel.getDate() - (dow === 0 ? 6 : dow - 1));
+            const snapped = fmtDate(sel);
+            setWeekStart(snapped);
             try {
-              const saved = localStorage.getItem(`${DRAFT_KEY}_${d}`);
+              const saved = localStorage.getItem(`${DRAFT_KEY}_${snapped}`);
               if (saved) { setDays(JSON.parse(saved)); return; }
             } catch {}
-            setDays(makeRows(d));
+            setDays(makeRows(snapped));
           }} style={{ position: "absolute", opacity: 0, pointerEvents: "none", width: 0, height: 0 }} />
         </div>
         {/* Hours progress */}
@@ -1311,16 +1342,38 @@ function LabourHireTimesheetForm({ onSubmit, lockedEmployee, employeeData, impor
       </div>
 
       {/* Actions */}
-      <div style={{ display: "flex", gap: 12, marginTop: 24 }}>
-        <button onClick={handleSubmit}
-          style={{ padding: "10px 28px", background: "#1e293b", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" }}>
-          Submit Timesheet
-        </button>
-        <button onClick={() => setDays(makeRows(weekStart))}
-          style={{ padding: "10px 20px", background: "#fff", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 14, fontFamily: "inherit" }}>
-          Reset
-        </button>
-      </div>
+      {(() => {
+        const incompleteLH = days.filter(d => !d.isWeekend && d.lines.reduce((s, l) => s + Number(l.hours || 0), 0) === 0);
+        return (
+          <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 12 }}>
+            {incompleteLH.length > 0 && (
+              <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "14px 18px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontSize: 18 }}>⚠️</span>
+                  <span style={{ fontWeight: 700, color: "#92400e", fontSize: 14 }}>{incompleteLH.length} work day{incompleteLH.length > 1 ? "s" : ""} with no hours logged</span>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {incompleteLH.map((d, i) => (
+                    <div key={i} style={{ background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 7, padding: "4px 12px", fontSize: 12, color: "#92400e" }}>
+                      <strong>{d.label}</strong> — 0h
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 12 }}>
+              <button onClick={handleSubmit}
+                style={{ padding: "10px 28px", background: "#1e293b", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" }}>
+                Submit Timesheet
+              </button>
+              <button onClick={() => setDays(makeRows(weekStart))}
+                style={{ padding: "10px 20px", background: "#fff", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 14, fontFamily: "inherit" }}>
+                Reset
+              </button>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -2486,7 +2539,7 @@ function EmployeePortal({ user, entries, onSubmit, importedJobs = [] }) {
     const d = new Date(dateStr + "T00:00:00");
     const daysBack = (d.getDay() + 3) % 7; // Thu=0, Fri=1, ..., Wed=6
     d.setDate(d.getDate() - daysBack);
-    return d.toISOString().slice(0, 10);
+    return fmtDate(d);
   };
 
   // Fix day label: r.day has correct date number+month but wrong weekday name
